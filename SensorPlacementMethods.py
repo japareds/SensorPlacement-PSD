@@ -25,7 +25,7 @@ import cvxpy as cp
 #         #     #yield m_
 #     return arr
 
-    
+
 
 #%% D-optimal subset selection
 """
@@ -49,7 +49,7 @@ def D_optimal(Psi,p):
     p = number of point measurements
     """
     n,r = Psi.shape 
-    print(f'D-optimal subset selection algorithm\nspace dimension: {n}\nnumber of basis vectors:{r}\nnumber of points measurements: {p}\n{n}C{r} = {math.comb(n,r)} determinant evaluations')
+    print(f'D-optimal subset selection algorithm\nspace dimension: {n}\nnumber of basis vectors:{r}\nnumber of points measurements: {p}\n{n}C{p} = {math.comb(n,p)} determinant evaluations')
     C = np.zeros((p,n))
     # initialize placement
     C = possible_C(p,n)
@@ -58,11 +58,13 @@ def D_optimal(Psi,p):
     for c in C:
         Theta = c @ Psi
         M = Theta.T @ Theta
-        f = np.log10(np.abs(np.linalg.det(M)))
+        f = np.log10(np.linalg.det(M))
         results.append(f)
     # compute optimal placement
-    locations = np.argmax(results)
-    return C[locations],locations
+    loc = np.argmax(results)
+    C_optimal = C[loc]
+    locations = np.argwhere(C_optimal==1)[:,1]
+    return C_optimal,locations
 #%% QR pivoting
 """
 Psi.T C.T = QR
@@ -124,14 +126,14 @@ def ConvexOpt_homoscedasticity(Psi,p):
     # largest p values
     locations = np.sort(np.argpartition(beta.value,-p)[-p:])
     beta_vals = [beta.value[i] for i in locations]
-    print(f'{p} optimal sensor placement found:\nlocations: {locations}\nbeta values: {beta_vals}')
+    print(f'{p} optimal sensor locations found:\nlocations: {locations}\nbeta values: {beta_vals}')
     
     C = np.zeros((p,n))
     for i in range(C.shape[0]):
         C[i,locations[i]] = 1
     
     
-    return C,locations
+    return C,locations,beta.value
 
 def ConvexOpt(Psi,p,k=[],sensors = []):
     """
@@ -146,18 +148,19 @@ def ConvexOpt(Psi,p,k=[],sensors = []):
     classes = len(sensors)
     if sensors[0] == 0 or sensors[0] == p: # homoscedasticity: only one class of sensors
         print('Only 1 class of sensors. Solving homoscedastic problem.')
-        C,locations = ConvexOpt_homoscedasticity(Psi, p)
+        C,locations,beta_value = ConvexOpt_homoscedasticity(Psi, p)
         if sensors[0] == 0:
             loc = []
             loc.append([])
             loc.append(locations)
-            return C,loc
+            return C,loc,beta_value
         elif sensors[1]==0:
             loc = []
             loc.append(locations)
             loc.append([])
-            return C,loc
-        return C,locations
+            return C,loc,beta_value
+        return C,locations,beta_value
+    
     else:
         print(f'{len(sensors)} types of sensors with variance ratios {k}. Solving heteroscedastic problem.')
         
@@ -197,12 +200,12 @@ def ConvexOpt(Psi,p,k=[],sensors = []):
             locations.append(loc)
                 
                 
-        
+        print(f'{p} optimal sensor placement found:\nlocations: {locations}\nbeta values:\n {beta.value}')
         C = np.zeros((p,n))
         for i in range(C.shape[0]):
                 C[i,np.sort(np.concatenate(locations))[i]] = 1
     
-    return C,locations
+    return C,locations,beta.value
 
 #%%
 def main():

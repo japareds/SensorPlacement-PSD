@@ -71,7 +71,66 @@ def visualize_singularVectors(U):
     ax2.grid()
     ax.set_title('N first singular vectors',fontsize=ls)
     return fig
+
+#%% Algorithms results
+def plot_E_optimal_p1_change(E_optimal_p2_3_s3_10,E_optimal_p2_5_s3_10,E_optimal_p2_7_s3_10,E_optimal_p2_3_s3_100,E_optimal_p2_5_s3_100,E_optimal_p2_7_s3_100,E_optimal_p2_3_s3_1000,E_optimal_p2_5_s3_1000,E_optimal_p2_7_s3_1000):
+    """
+    Plot E-optimal results for varying number of LCSs (p1) using a fixed number of reference stations(p2)
+    Different subplots for different parametrization of empty places (sigma3)
+    """
+    fs = 15
+    fig = plt.figure()
+    ax = fig.add_subplot(311)
+    ax1 = fig.add_subplot(312)
+    ax2 = fig.add_subplot(313)
+    
+    ax.plot(np.arange(1,9),E_optimal_p2_3_s3_10,color='#117a65',label='3 reference stations',marker='o')
+    ax.plot(np.arange(1,7),E_optimal_p2_5_s3_10,color='#d68910',label='5 reference stations',marker='o')
+    ax.plot(np.arange(1,5),E_optimal_p2_7_s3_10,color='#1f618d',label='7 reference stations',marker='o')
         
+    ax1.plot(np.arange(1,9),E_optimal_p2_3_s3_100,color='#117a65',label='3 reference stations',marker='o')
+    ax1.plot(np.arange(1,7),E_optimal_p2_5_s3_100,color='#d68910',label='5 reference stations',marker='o')
+    ax1.plot(np.arange(1,5),E_optimal_p2_7_s3_100,color='#1f618d',label='7 reference stations',marker='o')
+    
+    ax2.plot(np.arange(1,9),E_optimal_p2_3_s3_1000,color='#117a65',label='3 reference stations',marker='o')
+    ax2.plot(np.arange(1,7),E_optimal_p2_5_s3_1000,color='#d68910',label='5 reference stations',marker='o')
+    ax2.plot(np.arange(1,5),E_optimal_p2_7_s3_1000,color='#1f618d',label='7 reference stations',marker='o')
+    
+    ax.set_xticklabels(labels=[])
+    ax1.set_xticklabels(labels=[])
+    xrange = np.arange(1,9,1)
+    ax2.set_xticks(xrange)
+    ax2.set_xticklabels(xrange,fontsize=fs)
+    
+    yrange = [1,10]
+    ax.set_yticks(yrange)
+    ax.set_yticklabels(['$\sigma^2_{LCS}$','$10\sigma^2_{LCS}$'],fontsize=fs)
+    yrange = [1,100]
+    ax1.set_yticks(yrange)
+    ax1.set_yticklabels(['$\sigma^2_{LCS}$','$10^2 \sigma^2_{LCS}$'],fontsize=fs)
+    yrange = [1,1000]
+    ax2.set_yticks(yrange)
+    ax2.set_yticklabels(['$\sigma^2_{LCS}$','$10^3 \sigma^2_{LCS}$'],fontsize=fs)
+    
+    ax2.set_xlabel('Number of LCSs',fontsize=fs)
+    ax.set_ylabel('$\min\ \lambda_{max} \mathbf{\Sigma_{\hat{a}}}$',fontsize=fs)
+    ax1.set_ylabel('$\min\ \lambda_{max} \mathbf{\Sigma_{\hat{a}}}$',fontsize=fs)
+    ax2.set_ylabel('$\min\ \lambda_{max} \mathbf{\Sigma_{\hat{a}}}$',fontsize=fs)
+    
+    ax.set_title('$\sigma^2_{empty} = 10$',fontsize=fs)
+    ax1.set_title('$\sigma^2_{empty} = 10^2$',fontsize=fs)
+    ax2.set_title('$\sigma^2_{empty} = 10^3$',fontsize=fs)
+    ax.legend(fontsize=fs)
+    ax1.legend(fontsize=fs)
+    ax2.legend(fontsize=fs)
+    
+    
+    plt.tight_layout()
+    
+    return
+
+
+
 
 #%% Sensor placement reconstruction: true vs predicted
 def plot_true_vs_predicted(y_true,y_pred,RefStations,RMSE_stations,locations_not_measured):

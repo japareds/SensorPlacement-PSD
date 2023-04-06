@@ -15,6 +15,7 @@ import numpy as np
 from scipy import linalg
 import cvxpy as cp
 import matplotlib.pyplot as plt
+
 import LoadDataSet as LDS
 import LowRankDecomposition as LRD
 import SensorPlacementMethods as SPM
@@ -35,9 +36,9 @@ def TrainTestSplit(df,end_date_train,end_date_test):
     Splits data set into train and testing set.
     Everything up to the date specified will be used for training. The remaining will be testing set
     """
-    time_range = pd.date_range(start=df.index[0],end=end_date_train,freq='1H',closed='left')
+    time_range = pd.date_range(start=df.index[0],end=end_date_train,freq='1H',inclusive='left')
     df_train = df.loc[df.index.isin(time_range)]
-    time_range = pd.date_range(start=end_date_train,end=end_date_test,freq='1H',closed='left')
+    time_range = pd.date_range(start=end_date_train,end=end_date_test,freq='1H',inclusive='left')
     df_test = df.loc[df.index.isin(time_range)]
     
     print(f'Training set generated: from {df_train.index[0]} until {df_train.index[-1]}. {df_train.shape[0]} measurements')
@@ -122,8 +123,9 @@ def sensors_distributions(n,p1,p2,p3):
             for c2_ in c2:
                 c3_ = empty_locations(In,C1[idx],c2_)
                 c3.append(c3_)
-                C2.append(c2)
-                C3.append(c3)
+            C2.append(c2)
+            C3.append(c3)
+    
     else:
         C2 = C1c.copy()
     return C1,C2,C3
@@ -179,20 +181,37 @@ def E_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1 = 1e-1,sigma2 =1e-1/10,sig
     n,r = Psi.shape 
     # iterate over possibilities
     results = []
-    for c1,c2_,c3_ in zip(C1,C2,C3):
-        for c2,c3 in zip(c2_,c3_):
+    idx = 0
+    if p3 != 0:
+        for c1,c2_,c3_ in zip(C1,C2,C3):
+            for c2,c3 in zip(c2_,c3_):
+                Theta1 = c1@Psi
+                Theta2 = c2@Psi
+                Theta3 = c3@Psi
+                
+                Phi1= Theta1.T@Theta1
+                Phi2 = Theta2.T@Theta2
+                Phi3 = Theta3.T@Theta3
+                M_ = (1/sigma1)*Phi1 + (1/sigma2)*Phi2 + (1/sigma3)*Phi3
+                Var = np.linalg.inv(M_)
+                lambdas,_ = np.linalg.eigh(Var)
+                lmax = lambdas.max()
+                results.append(lmax)
+            idx+=1
+    else:
+        for c1,c2 in zip(C1,C2):
             Theta1 = c1@Psi
             Theta2 = c2@Psi
-            Theta3 = c3@Psi
             
             Phi1= Theta1.T@Theta1
             Phi2 = Theta2.T@Theta2
-            Phi3 = Theta3.T@Theta3
-            M_ = (1/sigma1)*Phi1 + (1/sigma2)*Phi2 + (1/sigma3)*Phi3
+            
+            M_ = (1/sigma1)*Phi1 + (1/sigma2)*Phi2
             Var = np.linalg.inv(M_)
             lambdas,_ = np.linalg.eigh(Var)
             lmax = lambdas.max()
             results.append(lmax)
+        
     if save_iter:
         fname = f'E-optimal_SensorReplacement_r{r}_p1_{p1}_p2_{p2}_p3_{p3}_sigma1_{sigma1}_sigma2_{sigma2}_sigma3_{sigma3}.csv'
         np.savetxt(f'{results_path}{fname}',results,delimiter=',')
@@ -550,8 +569,49 @@ def two_classes_full_space():
     
     
     return
+
+#%% Paper experiments
+def experiment_E_optimal_varying_p1():
+    """
+    Run E_optimal algorithm for exhaustive positioning of 3 classes of sensors:
+        - LCSs, Ref Stations and empty in limit
     
-#%%
+    1. Set number of eigenmodes r
+    2. Set Ref Stations parametrization sigma2
+    3. Set number of reference stations p2
+    4. Run for varying number of p1, from 1 to p2_complement
+    5. Run E_topimal
+    6. Save for p2_{p2}_sigma3_{sigma3}
+
+    Returns
+    -------
+    E_optimal_p2_3_s3_1000 : np.array
+        Results E_optimal for different p1:1...n-p2
+    """
+    r=8
+    n=11
+    p = n
+    Psi = U[:,:r]
+    # number of sensors per class
+    p2 = 3 #ref st
+    p2_c = p-p2 #empty+lcs
+    sigma1 = 1
+    sigma2 = sigma1/1e3
+    sigma3 = sigma1*1000
+    
+    E_optimal_p2_3_s3_1000 = []
+    for p1 in np.arange(1,p2_c+1):
+    #p1 = 1 #lcs. if p1 = p2_c -> p3=0
+        p3 = p2_c-p1 #empty
+        # sensors distributions and sparse basis
+        C1,C2,C3 = sensors_distributions(n,p1,p2,p3)
+        # sensor placement algorithm
+        results_E = E_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
+        E_optimal_p2_3_s3_1000.append(results_E.min())
+         
+    return E_optimal_p2_3_s3_1000
+     
+#%% main
 def main():
     
     return
@@ -581,27 +641,32 @@ if __name__=='__main__':
     r=8
     n=11
     p = n
-
     # number of sensors per class
-    p2 = 5 #ref st
+    p2 = 3 #ref st
     p2_c = p-p2 #empty+lcs
-    p1 = p2_c #lcs. if p1 = p2_c -> p3=0
-    p3 = p2_c-p1 #empty
-    # sensors parameters
     sigma1 = 1
-    sigma2 = sigma1/10
-    sigma3 = sigma1*10
+    sigma2 = sigma1/1e3
+    sigma3 = sigma1*1000
     
-    # sensors distributions and sparse basis
-    C1,C2,C3 = sensors_distributions(n,p1,p2,p3)
-    Psi = U[:,:r]
+    E_optimal_p2_3_s3_1000 = []
+    for p1 in np.arange(1,p2_c+1):
+    #p1 = 1 #lcs. if p1 = p2_c -> p3=0
+        p3 = p2_c-p1 #empty
+        
     
-    # functions
-    #Psi,C1,H1,Theta1,Phi1,sigma1,C2,H2,Theta2,Phi2,sigma2,Var,a_hat = full_space_positioning(U,r,p,p1,p2,sigma1,sigma2)
-    #lambda1,lambda2,diag1,diag2,lambdaVar,v1,v2,vVar = spectral_information(Phi1,Phi2,Var)
-    results_limit = D_optimal_limit(Psi,C1,C2,sigma1)
-    results_E = E_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
-    results_D = D_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
+        # sensors distributions and sparse basis
+        C1,C2,C3 = sensors_distributions(n,p1,p2,p3)
+        Psi = U[:,:r]
+    
+        # functions
+        #Psi,C1,H1,Theta1,Phi1,sigma1,C2,H2,Theta2,Phi2,sigma2,Var,a_hat = full_space_positioning(U,r,p,p1,p2,sigma1,sigma2)
+        #lambda1,lambda2,diag1,diag2,lambdaVar,v1,v2,vVar = spectral_information(Phi1,Phi2,Var)
+    
+        #results_limit = D_optimal_limit(Psi,C1,C2,sigma1)
+        results_E = E_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
+        E_optimal_p2_3_s3_1000.append(results_E.min())
+        
+        #results_D = D_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
     
     
     

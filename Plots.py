@@ -28,8 +28,8 @@ def CovarianceMatrix_plot(X,RefStations):
 
 #%% Low-rank decomposition
 
-def visualize_singularvalues(S):
-    ls = 15
+def plot_singularvalues(S):
+    fs = 15
     # singular values
     fig = plt.figure(figsize=(8,8))
     ax = fig.add_subplot(211)
@@ -37,18 +37,27 @@ def visualize_singularvalues(S):
     ax.plot([i+1 for i in range(len(S))],S/max(S),'o',label='$\sigma_i$')
     ax1.plot([i+1 for i in range(len(S))],np.cumsum(S)/np.sum(S),'o',color='orange',label='Cumulative energy')
     #ax.set_yscale('log')
-    ax.set_ylabel('Normalizaed singular values',fontsize=ls)
-    ax1.set_ylabel('Cumulative energy',fontsize=ls)
-    ax1.set_xlabel('$i$-th singular value',fontsize=ls)
-    ax.set_title('Snapshots matrix singular values',fontsize=ls)
+    yrange = np.logspace(-2,0,3)
+    ax.set_yticks(yrange)
+    ax.set_yticklabels(['$10^{-2}$','$10^{-1}$','$1$'],fontsize=fs)
+    ax.set_ylabel('Normalizaed singular values',fontsize=fs)
+    ax1.set_ylabel('Cumulative energy',fontsize=fs)
+    yrange = np.arange(0.0,1.1,0.1)
+    ax1.set_yticks(yrange)
+    ax1.set_yticklabels(np.round(ax1.get_yticks(),decimals=1),fontsize=fs)
+    ax1.set_xlabel('$i$-th singular value',fontsize=fs)
+    xrange = np.arange(0,len(S)+5,5)
+    ax1.set_xticks(xrange[1:])
+    ax1.set_xticklabels(ax1.get_xticks(),fontsize=fs)
+    ax.set_xticks(xrange[1:])
     ax.set_xticklabels([])
-    ax.set_yscale('log')
-    ax.set_yticks([1e0,1e-1,1e-2])
+    
+    ax.set_title('Snapshots matrix singular values',fontsize=fs)
     ax.grid()
     ax1.grid()
     
-    ax.tick_params(axis='both', which='major', labelsize=ls)
-    ax1.tick_params(axis='both', which='major', labelsize=ls)
+    ax.tick_params(axis='both', which='major', labelsize=fs)
+    ax1.tick_params(axis='both', which='major', labelsize=fs)
     plt.tight_layout()
     
     return fig
@@ -72,7 +81,7 @@ def visualize_singularVectors(U):
     ax.set_title('N first singular vectors',fontsize=ls)
     return fig
 
-#%% Algorithms results
+#%% Experiments results
 def plot_E_optimal_p1_change(E_optimal_p2_3_s3_10,E_optimal_p2_5_s3_10,E_optimal_p2_7_s3_10,E_optimal_p2_3_s3_100,E_optimal_p2_5_s3_100,E_optimal_p2_7_s3_100,E_optimal_p2_3_s3_1000,E_optimal_p2_5_s3_1000,E_optimal_p2_7_s3_1000):
     """
     Plot E-optimal results for varying number of LCSs (p1) using a fixed number of reference stations(p2)
@@ -130,7 +139,67 @@ def plot_E_optimal_p1_change(E_optimal_p2_3_s3_10,E_optimal_p2_5_s3_10,E_optimal
     return
 
 
+def plot_ConvexOpt_2class_lambda(results,lambda_val,p1,p2,Psi):
+    print(f'Results plot for some value of lambda in {[i for i in results.keys()]}')
+    n = Psi.shape[0]
+    fs = 15
+    fig = plt.figure(figsize=(8,8))
+    ax = fig.add_subplot(111)
+    ax.bar(np.arange(1,len(results[lambda_val][0])+1),results[lambda_val][0],label='LCSs',color='#1a5276')
+    ax.bar(np.arange(1,len(results[lambda_val][1])+1),-1*results[lambda_val][1],label='Ref.St.',color='#ca6f1e')
+    xrange = np.arange(0,n+5,5)
+    ax.set_xticks(xrange[1:])
+    ax.set_xticklabels(ax.get_xticks(),fontsize=fs)
+    yrange = np.arange(-1,1.2,0.2)
+    ax.set_yticks(yrange)
+    ax.set_yticklabels(np.abs(np.round(yrange,decimals=1)),fontsize=fs)
+    ax.set_xlabel('i-th entry',fontsize=fs)
+    ax.set_ylabel('$h_i$',fontsize=fs)
+    ax.legend(fontsize=fs,loc='upper right')
+    ax.set_title(f'Convex optimization results $\lambda$ = {lambda_val}\n {p1} LCSs and {p2} reference stations',fontsize=fs)
+    ax.grid(axis='y')
+    return fig
 
+def plot_ConvexOpt_limit(results,sigma2,p1,p2,Psi):
+    n = Psi.shape[0]
+    fs = 15
+    fig = plt.figure(figsize=(8,8))
+    ax = fig.add_subplot(111)
+    ax.bar(np.arange(1,len(results[sigma2][0])+1),results[sigma2][0],label='LCSs',color='#1a5276')
+    ax.bar(np.arange(1,len(results[sigma2][1])+1),-1*results[sigma2][1],label='Ref.St.',color='#ca6f1e')
+    xrange = np.arange(0,n+5,5)
+    ax.set_xticks(xrange[1:])
+    ax.set_xticklabels(ax.get_xticks(),fontsize=fs)
+    yrange = np.arange(-1,1.2,0.2)
+    ax.set_yticks(yrange)
+    ax.set_yticklabels(np.abs(np.round(yrange,decimals=1)),fontsize=fs)
+    ax.set_xlabel('i-th entry',fontsize=fs)
+    ax.set_ylabel('$h_i$',fontsize=fs)
+    ax.legend(fontsize=fs,loc='upper right')
+    exponent = '-'+'{:.0e}'.format(sigma2)[-1]
+    ax.set_title(f'Convex optimization results $\sigma_2^2 = 10^{{{exponent}}}\sigma_1^2$\n {p1} LCSs and {p2} reference stations',fontsize=fs)
+    ax.grid(axis='y')
+    
+    return fig
+
+def plot_ConvexOpt_lambdas_D_optimal(D_optimal_metric,objective_metric,lambdas):
+    fs=15
+    fig = plt.figure(figsize=(8,8))
+    ax = fig.add_subplot(111)
+    ax.plot(lambdas,D_optimal_metric,marker='o',color='#ca6f1e',label='D-optimal objective function')
+    ax.plot(lambdas,objective_metric,marker='o',color='#1a5276',label='Regularized objective function')
+    ax.set_xticks(lambdas)
+    ax.set_xticklabels(ax.get_xticks(),fontsize=fs)
+    ax.set_xscale('log')
+    ax.set_ylabel('Normalized objective function',fontsize=fs)
+    yrange = np.arange(0.,1.2,0.2)
+    ax.set_yticks(yrange)
+    ax.set_yticklabels(np.round(ax.get_yticks(),decimals=3),fontsize=fs)    
+    ax.set_xlabel('Regularization parameter $\lambda$',fontsize=fs)
+    ax.set_title('Convex relaxation of D-optimal experiment design',fontsize=fs)
+    ax.grid()
+    ax.legend(loc='upper right',fontsize=fs)
+    return fig
 
 #%% Sensor placement reconstruction: true vs predicted
 def plot_true_vs_predicted(y_true,y_pred,RefStations,RMSE_stations,locations_not_measured):

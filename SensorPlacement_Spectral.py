@@ -15,6 +15,7 @@ import numpy as np
 from scipy import linalg
 import cvxpy as cp
 import matplotlib.pyplot as plt
+import pickle
 
 import LoadDataSet as LDS
 import LowRankDecomposition as LRD
@@ -25,10 +26,9 @@ import Plots
 def create_dataSet():
     dataset = LDS.dataSet(pollutant,start_date,end_date, RefStations)
     dataset.load_dataSet(file_path)
-    #dataset.cleanMissingvalues(strategy='interpolate')
     # remove persisting missing values
+    dataset.cleanMissingvalues(strategy='stations',tol=0.1,RefStations=RefStations)
     dataset.cleanMissingvalues(strategy='remove')
-    
     return dataset
 
 def TrainTestSplit(df,end_date_train,end_date_test):
@@ -36,9 +36,9 @@ def TrainTestSplit(df,end_date_train,end_date_test):
     Splits data set into train and testing set.
     Everything up to the date specified will be used for training. The remaining will be testing set
     """
-    time_range = pd.date_range(start=df.index[0],end=end_date_train,freq='1H',inclusive='left')
+    time_range = pd.date_range(start=df.index[0],end=end_date_train,freq='1H',closed='left')
     df_train = df.loc[df.index.isin(time_range)]
-    time_range = pd.date_range(start=end_date_train,end=end_date_test,freq='1H',inclusive='left')
+    time_range = pd.date_range(start=end_date_train,end=end_date_test,freq='1H',closed='left')
     df_test = df.loc[df.index.isin(time_range)]
     
     print(f'Training set generated: from {df_train.index[0]} until {df_train.index[-1]}. {df_train.shape[0]} measurements')
@@ -280,79 +280,6 @@ def D_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1 = 1e-1,sigma2 =1e-1/10,sig
     return np.array(results)
 
 
-def D_optimal_convex(Psi,C1,C2,C3,p1,p2,p3,sigma1 = 1e-1,sigma2 =1e-1/10,sigma3=10*1e-1,save_iter=False,results_path='.'):
-    """
-    Convex relaxation for D-optimal
-
-    Parameters
-    ----------
-    Psi : np array(n,r)
-        Eigenmodes basis of r vectors in R^n
-    C1 : np array
-        distribution of class 1
-    C2 : np array
-        distribution of class 2 (ref stations)
-    C3 : np array
-        distribution of class 3 (empty)
-    sigma1 : float, optional
-        Class 1 sensors variance. The default is 1e-1.
-    sigma2 : float, optional
-        Class 2 sensors variance. The default is 1e-1/10.
-    sigma3 : float, optional
-        Class 3 sensors variance. The default is 10*1e-1.
-    save_iter : bool, optional
-        save search results. The default is False.
-    results_path : str, optional
-        path to save directory. The default is '.'.
-
-    Returns
-    -------
-    results: np array
-        results of the exhaustive search
-    """
-    n,r = Psi.shape 
-    # iterate over possibilities
-    # problem data
-    beta = cp.Variable((n,classes),pos=True,name='beta')
-    F = []
-    for eq in range(classes):
-        F.append(k[eq]*cp.sum([beta[i,eq]*f[i] for i in range(n)],axis=0))
-    Total_sum = cp.sum([F[i] for i in range(len(F))])
-    
-    objective = cp.Minimize(-1*cp.log_det(Total_sum))
-    constraints = [
-        beta >= np.zeros((n,classes)),# betas >= 0
-        cp.sum(beta,axis=1) <= 1, # sum of probabilities at most 1
-        cp.sum(beta,axis=0) == sensors # sum betas_i = num_sensors_class_i
-        ]
-    
-    problem = cp.Problem(objective, constraints)
-    problem.solve(gp=False)
-    
-    
-    results = []
-    for c1,c2_,c3_ in zip(C1,C2,C3):
-        for c2,c3 in zip(c2_,c3_):
-            Theta1 = c1@Psi
-            Theta2 = c2@Psi
-            Theta3 = c3@Psi
-            
-            Phi1= Theta1.T@Theta1
-            Phi2 = Theta2.T@Theta2
-            Phi3 = Theta3.T@Theta3
-            M_ = (1/sigma1)*Phi1 + (1/sigma2)*Phi2 + (1/sigma3)*Phi3
-            ld = np.log(np.linalg.det(M_))
-            results.append(ld)
-    if save_iter:
-        fname = f'D-optimal_SensorReplacement_r{r}_p1_{p1}_p2_{p2}_p3_{p3}_sigma1_{sigma1}_sigma2_{sigma2}_sigma3_{sigma3}.csv'
-        np.savetxt(f'{results_path}{fname}',results,delimiter=',')
-        
-    # compute optimal placement
-    #  loc = np.argmax(results)
-     # C_optimal = C1[loc]
-     # locations = np.argwhere(C_optimal==1)[:,1]
-        
-    return np.array(results)
 
 #%%
 def full_space_positioning(U,r,p,p1,p2,sigma1,sigma2):
@@ -610,6 +537,57 @@ def experiment_E_optimal_varying_p1():
         E_optimal_p2_3_s3_1000.append(results_E.min())
          
     return E_optimal_p2_3_s3_1000
+
+def experiment_ConvexOpt2class_varyingLambda(Psi,sigma1,sigma2,p1,p2):
+    """
+    Convex relaxation of 2 classes of sensors
+    Test impact of regularization parameter
+    -------------------------------.
+    Number of eigenmodes are fixed.
+    number of sensors for each class is fixed
+    variances for each class are fixed
+    """
+    lambdas = np.logspace(-3,3,7)
+    results = {el:0 for el in lambdas}
+    D_optimal_metric = []
+    objective_metric = []
+    for lambda_reg in lambdas:
+        #H1_optimal,H2_optimal,Phi1_optimal,Phi2_optimal = SPM.ConvexOpt_2classes(Psi,lambda_reg,sigma1,sigma2,p1,p2)
+        H1_optimal,H2_optimal,obj_value = SPM.ConvexOpt_limit(Psi, sigma1, sigma2, p1, p2,lambda_reg)
+        results[lambda_reg] = [H1_optimal,H2_optimal]
+        Phi1_optimal = Psi.T@np.diag(H1_optimal)@Psi
+        Phi2_optimal = Psi.T@np.diag(H2_optimal)@Psi
+        D_optimal_obj = (1/sigma1)*Phi1_optimal + (1/sigma2)*Phi2_optimal
+        D_optimal_metric.append(-1*np.log(np.linalg.det(D_optimal_obj)))
+        objective_metric.append(obj_value)
+        #fig = Plots.plot_ConvexOpt_2class_lambda(results,lambda_reg,p1,p2,Psi)
+    D_optimal_metric = np.array(D_optimal_metric)
+    objective_metric = np.array(objective_metric)
+    # plot D_optimal metric for different lambda values
+    Plots.plot_ConvexOpt_lambdas_D_optimal(D_optimal_metric,objective_metric,lambdas)
+    return results,D_optimal_metric,objective_metric
+
+def experiment_ConvexOpt_convergence(Psi,sigma1,p1,p2,lambda_reg,results_path):
+    """
+    Convex optimization experiment 
+    convergence for sigma2 ->0, repeated for lower and lower values
+    
+    -----------------------
+    number of sensors for each class is fixed
+    eigenmodes are fixed
+    regularization value is fixed
+    variance of referencfe stations varies decreasing
+    """
+    sigmas = [1e-1,1e-3,1e-6]
+    results = {el:0 for el in sigmas}
+    for sigma2 in sigmas:
+        H1_optimal,H2_optimal = SPM.ConvexOpt_limit(Psi, sigma1, sigma2, p1, p2,lambda_reg)
+        results[sigma2] = [H1_optimal,H2_optimal]
+        fig = Plots.plot_ConvexOpt_limit(results,sigma2,p1,p2,Psi)
+
+    with open(f'{results_path}ConvexOpt/Limit_sigma2/ConvexOpt_limit_sigma2_lambda_{lambda_reg}_results.pkl', 'wb') as handle:
+        pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    return results
      
 #%% main
 def main():
@@ -622,7 +600,59 @@ if __name__=='__main__':
     file_path = os.path.abspath(os.path.join(abs_path,os.pardir)) + '/Files/'
     results_path = os.path.abspath(os.path.join(abs_path,os.pardir)) + '/Results/'
     # data set parameters
-    RefStations = ['Badalona','Ciutadella','Eixample','El-Prat','Gracia','Manlleu','Palau-Reial','Sant-Adria','Tona','Vall_Hebron','Vic']#Full_list: ['Badalona','Ciutadella','Eixample','El-Prat','Fabra','Gracia','Manlleu','Palau-Reial','Sant-Adria','Tona','Vall_Hebron','Vic']
+    RefStations_list = {
+                   'Badalona':'08015021',
+                   'Eixample':'08019043',
+                   'Gracia':'08019044',
+                   'Ciutadella':'08019050',
+                   'Vall-Hebron':'08019054',
+                   'Palau-Reial':'08019057',
+                   'Fabra':'08019058',
+                   'Berga':'08022006',
+                   'Gava':'08089005',
+                   'Granollers':'08096014',
+                   'Igualada':'08102005',
+                   'Manlleu':'08112003',
+                   'Manresa':'08113007',
+                   'Mataro':'08121013',
+                   'Montcada':'08125002',
+                   'Montseny':'08125002',
+                   'El-Prat':'08169009',
+                   'Rubi':'08184006',
+                   'Sabadell':'08187012',
+                   'Sant-Adria':'08194008',
+                   'Sant-Celoni':'08202001',
+                   'Sant-Cugat':'08205002',
+                   'Santa-Maria':'08259002',
+                   'Sant-Vicenç':'08263001',
+                   'Terrassa':'08279011',
+                   'Tona':'08283004',
+                   'Vic':'08298008',
+                   'Viladecans':'08301004',
+                   'Vilafranca':'08305006',
+                   'Vilanova':'08307012',
+                   'Agullana':'17001002',
+                   'Begur':'17013001',
+                   'Pardines':'17125001',
+                   'Santa-Pau':'17184001',
+                   'Bellver':'25051001',
+                   'Juneda':'25119002',
+                   'Lleida':'25120001',
+                   'Ponts':'25172001',
+                   'Montsec':'25196001',
+                   'Sort':'25209001',
+                   'Alcover':'43005002',
+                   'Amposta':'43014001',
+                   'La-Senla':'43044003',
+                   'Constanti':'43047001',
+                   'Gandesa':'43064001',
+                   'Els-Guiamets':'43070001',
+                   'Reus':'43123005',
+                   'Tarragona':'43148028',
+                   'Vilaseca':'43171002'
+                   }
+    RefStations = [i for i in RefStations_list.keys()]
+    
     pollutant = 'O3'
     start_date = '2011-01-01'
     end_date = '2022-12-31'
@@ -638,35 +668,34 @@ if __name__=='__main__':
     X_train = LRD.Snapshots_matrix(df_train)
     X_,U,S,V = LRD.low_rank_decomposition(X_train)
     
-    r=8
-    n=11
+    # basis selection
+    r=35 # 35: number of eigenmodes for 90% of cumulative energy
+    n=U.shape[0]
     p = n
+    Psi = U[:,:r]
     # number of sensors per class
-    p2 = 3 #ref st
+    p2 = int(np.round((2/3)*r)) #ref st
     p2_c = p-p2 #empty+lcs
+    p1 = r-p2
+    p3 = p2_c-p1 #empty
     sigma1 = 1
     sigma2 = sigma1/1e3
     sigma3 = sigma1*1000
+    print(f'Sensor placement parameters\n{n} locations\n{r} eigenmodes\n{p1} LCSs - sigma1 = {sigma1}\n{p2} Ref.St. - sigma2 = {sigma2}\n{p3} Empty locations - sigma3 = {sigma3}')
     
-    E_optimal_p2_3_s3_1000 = []
-    for p1 in np.arange(1,p2_c+1):
-    #p1 = 1 #lcs. if p1 = p2_c -> p3=0
-        p3 = p2_c-p1 #empty
-        
+    # sensors distributions and sparse basis
+    #C1,C2,C3 = sensors_distributions(n,p1,p2,p3)
+    # functions
+    #Psi,C1,H1,Theta1,Phi1,sigma1,C2,H2,Theta2,Phi2,sigma2,Var,a_hat = full_space_positioning(U,r,p,p1,p2,sigma1,sigma2)
+    #lambda1,lambda2,diag1,diag2,lambdaVar,v1,v2,vVar = spectral_information(Phi1,Phi2,Var)
     
-        # sensors distributions and sparse basis
-        C1,C2,C3 = sensors_distributions(n,p1,p2,p3)
-        Psi = U[:,:r]
+    # results
+    #results_limit = D_optimal_limit(Psi,C1,C2,sigma1)
+    #results_E = E_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)    
+    #results_D = D_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
     
-        # functions
-        #Psi,C1,H1,Theta1,Phi1,sigma1,C2,H2,Theta2,Phi2,sigma2,Var,a_hat = full_space_positioning(U,r,p,p1,p2,sigma1,sigma2)
-        #lambda1,lambda2,diag1,diag2,lambdaVar,v1,v2,vVar = spectral_information(Phi1,Phi2,Var)
+    results_lambdas,D_optimal_metric,objective_metric = experiment_ConvexOpt2class_varyingLambda(Psi,sigma1,sigma2,p1,p2)
     
-        #results_limit = D_optimal_limit(Psi,C1,C2,sigma1)
-        results_E = E_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
-        E_optimal_p2_3_s3_1000.append(results_E.min())
-        
-        #results_D = D_optimal_multiclass(Psi,C1,C2,C3,p1,p2,p3,sigma1,sigma2,sigma3,save_iter=False)
     
     
     

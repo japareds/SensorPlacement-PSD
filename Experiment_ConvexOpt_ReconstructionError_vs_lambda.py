@@ -16,6 +16,7 @@ from sklearn.preprocessing import StandardScaler
 import cvxpy as cp
 import matplotlib.pyplot as plt
 import pickle
+import warnings
 
 import LoadDataSet as LDS
 import LowRankDecomposition as LRD
@@ -164,6 +165,52 @@ def Perturbate_RefSt(signal_refst,noise=0.1):
     return signal_perturbated
 
 #%% plots
+ 
+def plot_singularvalues(S,results_path):
+    fs = 10
+    figx,figy = 3.5,2.5
+    # singular values
+    fig = plt.figure(figsize=(figx,figy))
+    ax = fig.add_subplot(111)
+    ax.plot([i+1 for i in range(len(S))],S/max(S),'o',label='$\sigma_i$')    
+    #ax.set_yscale('log')
+    yrange = np.logspace(-2,0,3)
+    ax.set_yticks(yrange)
+    ax.set_yticklabels(['$10^{-2}$','$10^{-1}$','$1$'],fontsize=fs)
+    ax.set_ylabel('Normalizaed singular values',fontsize=fs)
+    ax.set_xlabel('$i$-th singular value',fontsize=fs)
+    yrange = np.arange(0.0,1.1,0.1)
+    xrange = np.arange(0,len(S)+5,5)
+    ax.set_xticks(xrange[1:])
+    ax.set_xticklabels(ax.get_xticks(),fontsize=fs)
+    
+    #ax.set_title('Snapshots matrix singular values',fontsize=fs)
+    ax.grid()
+    
+    ax.tick_params(axis='both', which='major', labelsize=fs)
+    fig.tight_layout()
+    
+    fig1 = plt.figure(figsize=(figx,figy))
+    ax1 = fig1.add_subplot(111)
+    ax1.plot([i+1 for i in range(len(S))],np.cumsum(S)/np.sum(S),'o',color='orange',label='Cumulative energy')
+    ax1.set_ylabel('Cumulative energy',fontsize=fs)
+    yrange = np.arange(0.0,1.2,0.3)
+    ax1.set_yticks(yrange)
+    ax1.set_yticklabels(np.round(ax1.get_yticks(),decimals=1),fontsize=fs)
+    ax1.set_xlabel('$i$-th singular value',fontsize=fs)
+    xrange = np.arange(0,len(S)+5,5)
+    ax1.set_xticks(xrange[1:])
+    ax1.set_xticklabels(ax1.get_xticks(),fontsize=fs)
+
+    ax1.grid()
+
+    ax1.tick_params(axis='both', which='major', labelsize=fs)
+    fig1.tight_layout()
+    
+
+    
+    return fig,fig1
+
 def plot_reconstructionErrors(reconstruction_error_empty,save=False):
     
     fs = 10
@@ -191,6 +238,25 @@ def plot_reconstructionErrors(reconstruction_error_empty,save=False):
    
     return fig
 
+#%% save
+def save_results(objective_function,reconstruction_error_empty,optimal_locations,p_eps,p_zero,p_empty,r,var_ratio,results_path):
+    print('Saving results')
+    # save objective function
+    fname = f'ObjectiveFunction_vs_lambda_RefSt{p_zero}_LCS{p_eps}_Empty{p_empty}_r{r}_varRatio{var_ratio}.pkl'
+    with open(results_path+fname, 'wb') as handle:
+        pickle.dump(objective_function, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # save optimal locations
+    fname = f'OptimalLocations_vs_lambda_RefSt{p_zero}_LCS{p_eps}_Empty{p_empty}_r{r}_varRatio{var_ratio}.pkl'
+    with open(results_path+fname, 'wb') as handle:
+        pickle.dump(optimal_locations, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # save reconstruction error
+    fname = f'ReconstructionErrorEmpty_vs_lambda_RefSt{p_zero}_LCS{p_eps}_Empty{p_empty}_r{r}_varRatio{var_ratio}.pkl'
+    with open(results_path+fname, 'wb') as handle:
+        pickle.dump(reconstruction_error_empty, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f'Results saved: {results_path}')
+    
+    return
+
 #%% Experiment
 def main(Psi,p_eps,p_zero,sigma_eps,sigma_zero,signal_refst,signal_lcs,X_train):
     """
@@ -212,6 +278,10 @@ def main(Psi,p_eps,p_zero,sigma_eps,sigma_zero,signal_refst,signal_lcs,X_train):
     for lambda_reg in lambdas:
         # get optimal locations and regularized objective function
         H1_optimal,H2_optimal,obj_value = SPM.ConvexOpt_limit(Psi, sigma_eps, sigma_zero, p_eps, p_zero,lambda_reg)
+        if np.abs(obj_value) == float('inf'):
+            warnings.warn("Convergence not reached")
+            continue
+            
         # compute D-optimal non-regularized objective function
         Phi1_optimal = Psi.T@np.diag(H1_optimal)@Psi
         Phi2_optimal = Psi.T@np.diag(H2_optimal)@Psi
@@ -323,3 +393,5 @@ if __name__=='__main__':
     print(f'\n{p_empty} Empty locations\nLambda\t RMSE')
     for lambda_reg,val in zip(reconstruction_error_empty.keys(),reconstruction_error_empty.values()):
         print(f'{lambda_reg}\t {val}')
+        
+    save_results(objective_func,reconstruction_error_empty,optimal_locations,p_eps,p_zero,p_empty,r,var_ratio,results_path)

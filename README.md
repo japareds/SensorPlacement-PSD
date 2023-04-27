@@ -6,7 +6,7 @@ The signal has a sparse representation in some basis and is reconstructed from p
 
 $\mathbf{y} = \mathbf{C\Psi a} = \mathbf{\Theta a}$
 
-$\mathbf{\Sigma_{\hat{a}}} = \left( \sigma_1^{-2}\mathbf{Theta_1^T \Theta_1} + \sigma_2^{-2}\mathbf{\Theta_2^T\Theta_2} + \sigma_3^{-3}\mathbf{\Theta_3^T\Theta_3}\right)^{-1}$
+$\mathbf{\Sigma_{\hat{a}}} = \left( \sigma_1^{-2}\mathbf{\Theta_1^T \Theta_1} + \sigma_2^{-2}\mathbf{\Theta_2^T\Theta_2} + \sigma_3^{-3}\mathbf{\Theta_3^T\Theta_3}\right)^{-1}$
 
 $\mathbf{y}\in \mathbb{R}^{p}$
 

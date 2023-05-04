@@ -207,6 +207,104 @@ def ConvexOpt(Psi,p,k=[],sensors = []):
     
     return C,locations,beta.value
 
+def ConvexOpt_limit(Psi,sigma1,sigma2,p1,p2,lambda_reg = 0.0):
+    """
+    Convex optimization for sensor placement problem
+    """
+    n,r = Psi.shape
+    H1 = cp.Variable(n,nonneg=True,value=np.ones(n))
+    H2 = cp.Variable(n,nonneg=True,value=np.ones(n))
+    Phi1 = Psi.T@cp.diag(H1)@Psi
+    Phi2 = Psi.T@cp.diag(H2)@Psi
+    
+    if p1!=0 and p2!= 0: # LCS and RefSt
+        obj = cp.log_det( (1/sigma1)*Phi1 + (1/sigma2)*Phi2 )
+        constraints = [
+            0<=H1,
+            0<=H2,
+            H1<=1,
+            H2<=1,
+            H1+H2 <=1,
+            cp.sum(H1) == p1,
+            cp.sum(H2) == p2
+            ]
+        
+    elif p2 == 0 :
+        print('0 reference stations')
+        obj = cp.log_det((1/sigma1)*Phi1)
+        constraints = [
+            0<=H1,
+            H1<=1,
+            cp.sum(H1) == p1,
+            ]
+        
+    elif p1 == 0:
+        print('0 LCSs')
+        obj = cp.log_det((1/sigma2)*Phi2)
+        constraints = [
+            0<=H2,
+            H2<=1,
+            cp.sum(H2) == p2
+            ]
+        
+        
+    
+    
+    if lambda_reg > 0.0 and p1!=0:
+        print(f'Regularized optimization problem with lambda = {lambda_reg}')
+        obj2 = (1/sigma2)*cp.trace(Phi2)
+        problem = cp.Problem(cp.Minimize(-1*obj - lambda_reg*obj2),constraints)
+    else:
+        problem = cp.Problem(cp.Minimize(-1*obj),constraints)
+    
+    problem.solve(verbose=True,max_iters=10000000)
+    H1_optimal = H1.value
+    H2_optimal = H2.value
+    
+    return H1_optimal,H2_optimal,problem.value
+
+def ConvexOpt_nuclearNorm(Psi,p2):
+    n,r = Psi.shape
+    H2 = cp.Variable(n,nonneg=True,value=np.ones(n))
+    Phi2 =  Psi.T@cp.diag(H2)@Psi
+    objective = cp.trace(Psi@Psi.T@cp.diag(H2))#cp.norm(Phi2,'nuc')
+    constraints = [
+        0<=H2,
+        H2<=1,
+        cp.sum(H2)==p2
+        ]
+    problem = cp.Problem(cp.Minimize(objective),constraints)
+    problem.solve()
+    H2_optimal = H2.value
+    Phi2_optimal = Phi2.value
+    
+    return H2_optimal,Phi2_optimal
+
+def ConvexOpt_2classes(Psi,lambda_reg,sigma1,sigma2,p1,p2):
+    n,r = Psi.shape
+    H1 = cp.Variable(n,nonneg=True,value=np.ones(n))
+    H2 = cp.Variable(n,nonneg=True,value=np.ones(n))
+    Phi1 = Psi.T@cp.diag(H1)@Psi
+    Phi2 = Psi.T@cp.diag(H2)@Psi
+    obj1 = (1/sigma1)*cp.log_det(Phi1)
+    obj2 = (1/sigma2)*cp.trace(Phi2)
+    constraints = [
+        0<=H1,
+        0<=H2,
+        H1<=1,
+        H2<=1,
+        H1+H2 <=1,
+        cp.sum(H1) == p1,
+        cp.sum(H2) == p2
+        ]
+    problem = cp.Problem(cp.Minimize(-1*obj1 - lambda_reg*obj2),constraints)
+    problem.solve()
+    H1_optimal = H1.value
+    H2_optimal = H2.value
+    Phi1_optimal = Phi1.value
+    Phi2_optimal = Phi2.value
+    
+    return H1_optimal,H2_optimal,Phi1_optimal,Phi2_optimal
 #%%
 def main():
     pass

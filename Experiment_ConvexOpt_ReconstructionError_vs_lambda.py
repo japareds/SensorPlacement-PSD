@@ -211,6 +211,71 @@ def plot_singularvalues(S,results_path):
     
     return fig,fig1
 
+def plot_reconstructionErrors_vs_Lambda(error_0lcs,error_1extralcs,error_replace1lcs,r):
+    """
+    plot reconstruction error for empty locations vs regularization parameter lambda
+    comparison of 3 different approaches:
+        - 0 LCS
+        - 1 extra LCS
+        - replace 1 ref st with 1 LCS
+    """
+    error_replace1lcs = pd.DataFrame(error_replace1lcs).iloc[:,:-1]
+    error_1extralcs = pd.DataFrame(error_1extralcs).iloc[:,:-1]
+    
+    fs = 10
+    figx,figy = 3.5,2.5
+    # singular values
+    fig = plt.figure(figsize=(figx,figy))
+    ax = fig.add_subplot(111)
+    ax.hlines(y=np.max(error_0lcs[0.0]),xmin=0,xmax=error_replace1lcs.shape[1],color='#1a5276',label=f'{r} Ref.st., 0 LCSs')
+    
+    ax.plot(error_replace1lcs.max(axis=0).values,color='#ca6f1e',label=f'{r-1}Ref.st., 1 LCS',marker='o')
+    
+    ax.plot(error_1extralcs.max(axis=0).values,color='#117a65',label=f'{r} Ref.st., 1 LCS',marker='o')
+    
+    #ax.hlines(y=np.max(error_0lcs[0.0]),xmin=list(error_0lcs.keys())[0],xmax=list(error_0lcs.keys())[-2],color='#1a5276',label='max error 0 LCSs')    
+    #ax.plot(error_1extralcs.keys(),error_1extralcs.values(),color='#0e6655',label='1 extra LCS')
+    #ax.plot(error_replace1lcs.columns,error_replace1lcs.max(axis=0),color='#ca6f1e',label='replace 1 Ref.St. with LCS',marker='^')
+    
+    
+    ax.set_xticks(np.arange(0,error_1extralcs.shape[1]))
+    ax.set_xticklabels([f'{i:.1e}' for i in error_1extralcs.columns],fontsize=fs)
+    ax.set_xlabel('Regularization parameter $\lambda$',fontsize=fs)
+    ax.set_yticks(np.arange(0.,30,5))
+    ax.set_yticklabels(np.round(ax.get_yticks(),1),fontsize=fs)
+    
+    ax.set_ylabel('RMSE',fontsize=fs)
+    ax.legend(loc='upper right',fontsize=fs)
+    ax.set_title(f'Maximum reconstruction error at\n non-measured locations\n using {r} eigenmodes',fontsize=fs)
+    fig.tight_layout()
+    
+    
+    
+    fs = 10
+    figx,figy = 3.5,2.5
+    fig = plt.figure(figsize=(figx,figy))
+    ax = fig.add_subplot(111)
+    ax.hlines(y=np.min(error_0lcs[0.0]),xmin=0,xmax=error_replace1lcs.shape[1],color='#1a5276',label=f'{r} Ref.st., 0 LCSs')
+    
+    ax.plot(error_replace1lcs.min(axis=0).values,color='#ca6f1e',label=f'{r-1} Ref.st., 1 LCS',marker='o')
+    
+    ax.plot(error_1extralcs.min(axis=0).values,color='#117a65',label=f'{r} Ref.st., 1 LCS',marker='o')
+    
+    
+    ax.set_xticks(np.arange(0,error_1extralcs.shape[1]))
+    ax.set_xticklabels([f'{i:.1e}' for i in error_1extralcs.columns],fontsize=fs)
+    ax.set_xlabel('Regularization parameter $\lambda$',fontsize=fs)
+    
+    ax.set_yticks(np.arange(0.2,0.7,0.1))
+    ax.set_yticklabels(np.round(ax.get_yticks(),1),fontsize=fs)
+    
+    ax.set_ylabel('RMSE',fontsize=fs)
+    ax.legend(loc='upper right',fontsize=fs)
+    ax.set_title(f'Minimum reconstruction error at\n non-measured locations\n using {r} eigenmodes',fontsize=fs)
+    fig.tight_layout()
+    
+    return fig
+
 def plot_reconstructionErrors(reconstruction_error_empty,save=False):
     
     fs = 10
@@ -288,35 +353,65 @@ def main(Psi,p_eps,p_zero,sigma_eps,sigma_zero,signal_refst,signal_lcs,X_train):
         D_optimal_obj = (1/sigma_eps)*Phi1_optimal + (1/sigma_zero)*Phi2_optimal
         
         # measurement
-        loc1 = H1_optimal.argsort()[-p_eps:]
-        loc2 = H2_optimal.argsort()[-p_zero:]
-        loc_empty = [i for i in np.arange(0,n) if i not in loc1 and i not in loc2]
-        In = np.identity(n)
-        C_eps = In[loc1,:]
-        C_zero = In[loc2,:]
-        C_empty = In[loc_empty,:]
-        Theta_eps = C_eps@Psi
-        Theta_zero = C_zero@Psi
-        Theta_empty = C_empty@Psi
         
-        y_eps = C_eps@signal_lcs
-        y_zero = C_zero@signal_refst
-        y_empty = C_empty@X_train
         
         # prediction at non-measured points
-        Theta = np.concatenate([Theta_eps,Theta_zero],axis=0)
-        y = np.concatenate([y_eps,y_zero],axis=0)
-        PrecisionMat = np.diag(np.concatenate([np.repeat(1/sigma_eps,p_eps),np.repeat(1/sigma_zero,p_zero)]))
-        beta_hat = np.linalg.inv(Theta.T@PrecisionMat@Theta)@Theta.T@PrecisionMat@y
+        if p_eps != 0 and p_zero != 0:
+            print(f'Prediction using {p_zero} Ref.St. and {p_eps} LCSs')
+            loc2 = H2_optimal.argsort()[-p_zero:]
+            loc1 = [i for i in np.argsort(H1_optimal) if i not in loc2][-p_eps:]
+            loc_empty = [i for i in np.arange(0,n) if i not in loc1 and i not in loc2]
+            
+            In = np.identity(n)
+            C_eps = In[loc1,:]
+            C_zero = In[loc2,:]
+            C_empty = In[loc_empty,:]
+            Theta_eps = C_eps@Psi
+            Theta_zero = C_zero@Psi
+            Theta_empty = C_empty@Psi
+            
+            y_eps = C_eps@signal_lcs
+            y_zero = C_zero@signal_refst
+            y_empty = C_empty@X_train
+            
+            
+            Theta = np.concatenate([Theta_eps,Theta_zero],axis=0)
+            y = np.concatenate([y_eps,y_zero],axis=0)
+            PrecisionMat = np.diag(np.concatenate([np.repeat(1/sigma_eps,p_eps),np.repeat(1/sigma_zero,p_zero)]))
+            beta_hat = np.linalg.inv(Theta.T@PrecisionMat@Theta)@Theta.T@PrecisionMat@y
         
-        y_zero_hat = Theta_zero@beta_hat
-        y_eps_hat = Theta_eps@beta_hat
-        y_empty_hat = Theta_empty@beta_hat
+            y_zero_hat = Theta_zero@beta_hat
+            y_eps_hat = Theta_eps@beta_hat
+            y_empty_hat = Theta_empty@beta_hat
+            
+        elif p_eps==0:
+            print(f'Prediction using {p_zero} Ref.St. and {p_eps} LCSs')
+            loc2 = H2_optimal.argsort()[-p_zero:]
+            loc_empty = [i for i in np.arange(0,n) if i not in loc2]
+            In = np.identity(n)
+            C_zero = In[loc2,:]
+            C_empty = In[loc_empty,:]
+            
+            Theta_zero = C_zero@Psi
+            Theta_empty = C_empty@Psi
+            y_zero = C_zero@signal_refst
+            y_empty = C_empty@X_train
+            
+            PrecisionMat = np.diag(np.concatenate([np.repeat(1/sigma_zero,p_zero)]))
+            beta_hat = np.linalg.inv(Theta_zero.T@PrecisionMat@Theta_zero)@Theta_zero.T@PrecisionMat@y_zero
+            
+            y_zero_hat = Theta_zero@beta_hat
+            y_empty_hat = Theta_empty@beta_hat
+            y_eps = np.zeros(shape=(p_zero,p_zero))
+            y_eps_hat = np.zeros(shape=(p_zero,p_zero))
+            
         
         # store results
         locations[lambda_reg] = [H1_optimal,H2_optimal]
+        
         D_optimal_metric[lambda_reg] = -1*np.log(np.linalg.det(D_optimal_obj))
         objective_metric[lambda_reg] = obj_value
+        
         reconstruction_error_zero[lambda_reg] = [np.round(np.sqrt(mean_squared_error(y_zero[i,:], y_zero_hat[i,:])),2) for i in range(y_zero.shape[0])]
         reconstruction_error_eps[lambda_reg] = [np.round(np.sqrt(mean_squared_error(y_eps[i,:], y_eps_hat[i,:])),2) for i in range(y_eps.shape[0])]
         reconstruction_error_empty[lambda_reg] = [np.round(np.sqrt(mean_squared_error(y_empty[i,:],y_empty_hat[i,:])),2) for i in range(y_empty.shape[0])]
@@ -336,6 +431,7 @@ if __name__=='__main__':
     X_train = LRD.Snapshots_matrix(df_train)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train.T).T
+    X_train_scaled = np.delete(X_train_scaled,(14),axis=0)# remove row 14 is linearly dependent: Montseny ref.st.
     U,S,V = LRD.low_rank_decomposition(X_train_scaled)
     
     X_test = LRD.Snapshots_matrix(df_test)
@@ -351,7 +447,7 @@ if __name__=='__main__':
     # parameters
     
     ## basis
-    r=35 # 35: number of eigenmodes for 90% of cumulative energy
+    r=34 # 35: number of eigenmodes for 90% of cumulative energy
     n=U.shape[0]
     p = n
     Psi = U[:,:r]
@@ -364,7 +460,7 @@ if __name__=='__main__':
     sigma_eps = 0.1**2
     sigma_zero = var_ratio*sigma_eps
     sigma_empty = sigma_eps*1000
-    print(f'Sensor placement parameters\n{n} locations\n{r} eigenmodes\n{p_eps+p_zero} sensors in total\n{p_eps} LCSs - variance = {sigma_eps}\n{p_zero} Ref.St. - variance = {sigma_zero}\n{p_empty} Empty locations - variance = {sigma_empty}')
+    print(f'Sensor placement parameters\n{n} locations\n{r} eigenmodes\n{p_eps+p_zero} sensors in total\n{p_eps} LCSs - variance = {sigma_eps:.2e}\n{p_zero} Ref.St. - variance = {sigma_zero:.2e}\n{p_empty} Empty locations - variance = {sigma_empty:.2e}')
     input('Press Enter to continue...')
     # experiment
     optimal_locations,objective_func,D_optimal_metric,reconstruction_error_zero,reconstruction_error_eps,reconstruction_error_empty = main(

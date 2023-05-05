@@ -48,156 +48,6 @@ def Perturbate_data(signal_refst,noise=0.1):
     signal_perturbated = signal_refst + noise
     
     return signal_perturbated
-#%% random placement functions
-def class_locations(M,n):
-    """
-    Sensor placement loctions for a specific class
-
-    Parameters
-    ----------
-    M : np.array (n,m)
-        Matrix with canonical vectors in R^n to sample from
-    n : int
-        Number of locations to sample
-    Returns
-    -------
-    arr : list
-        list of all possible sensor combinations
-    """
-    placements = itertools.combinations(M,n)
-    arr = []
-    for m in placements:
-        arr.append(np.array(m))
-    return arr
-
-def class_complementary_locations(C1,n):
-    """
-    Locations of complementary positions of distribution given by C
-    """
-    Id =  np.identity(n)
-    arr = []
-    for C1_ in C1:
-        C2 = Id.copy()
-        for i in np.argwhere(C1_==1):
-            C2[i[1],i[1]] = 0
-        C2 = C2[C2.sum(axis=1)==1,:]
-        arr.append(C2)
-    return arr
-
-def empty_locations(In,C1,C2):
-    """
-    Return locations not ocupied neither by class 1 nor by class 2
-
-    Parameters
-    ----------
-    In : np array (n,n)
-        Identity matrix
-    C1 : np array(p1,n)
-    C2 : np.array (p2,n)
-
-    Returns
-    -------
-    C3 : np.array(p3,n)
-    """
-    
-    C3 = In.copy()
-    for i in np.argwhere(C1==1):
-        C3[i[1],i[1]] = 0
-    for i in np.argwhere(C2==1):
-        C3[i[1],i[1]] = 0
-    C3 = C3[C3.sum(axis=1)==1,:]
-
-    return C3
-    
-def sensors_distributions(n,p1,p2,p3):
-    """
-    All possible distributions of sensor locations
-    """
-    In = np.identity(n)
-    C1 = class_locations(In,p1)
-    C1c = class_complementary_locations(C1,n)
-    C2 = []
-    C3 = []
-    if p3 != 0:
-        for idx in range(len(C1c)):
-            c1_ = C1c[idx]
-            c2 = class_locations(c1_,p2)
-            c3 = []
-            for c2_ in c2:
-                c3_ = empty_locations(In,C1[idx],c2_)
-                c3.append(c3_)
-            C2.append(c2)
-            C3.append(c3)
-    
-    else:
-        C2 = C1c.copy()
-    return C1,C2,C3
-
-def randomPlacement(n,p_eps,p_zero,p_empty,sigma_eps,sigma_zero,Psi,signal_lcs,signal_refst,var_ratio,num_samples=10):
-    """
-    Draw random locations for reconstruction
-    """
-    
-    locations = {}
-    C_eps_all, C_zero_all, C_empty_all = sensors_distributions(n,p_eps,p_zero,p_empty)
-    
-    rng = np.random.default_rng(seed=92)
-    locs = rng.integers(0,len(C_eps_all),num_samples)
-    
-    if p_eps!= 0:
-        reconstruction_error_empty = {('loc_eps','loc_empty'):'val'}
-        for i in locs:
-            C_eps = C_eps_all[i]
-            C_zero_ = C_zero_all[i]
-            C_empty_ = C_empty_all[i]
-            
-            j = rng.integers(0,len(C_empty_))
-            C_zero = C_zero_[j]
-            C_empty = C_empty_[j]
-
-            # define theta
-            Theta_eps = C_eps@Psi
-            Theta_zero = C_zero@Psi
-            Theta_empty = C_empty@Psi
-            # sample at locations
-            y_empty = C_empty@signal_refst
-                
-            beta_hat = beta_KKT(C_eps,C_zero,Theta_eps,Theta_zero,signal_refst,signal_lcs)
-            y_empty_hat = Theta_empty@beta_hat
-            
-            loc_zero = np.argwhere(C_zero==1)[:,-1]
-            loc_eps = np.argwhere(C_eps==1)[:,-1]
-            loc_empty = np.argwhere(C_empty==1)[:,-1]
-            locations[i] = [loc_eps,loc_zero,loc_empty]
-            
-            reconstruction_error_empty[loc_eps,loc_empty] = [np.round(np.sqrt(mean_squared_error(y_empty[i,:],y_empty_hat[i,:])),2) for i in range(y_empty.shape[0])]
-
-    else:
-        reconstruction_error_empty = {('loc_empty'):'val'}
-        C_zero_ = C_zero_all[0]
-        C_empty_ = C_empty_all[0]
-        
-        for i in np.arange(len(C_empty_)):
-            
-            C_empty=C_empty_[i]
-            C_zero =C_zero_[i]
-            
-            Theta_zero = C_zero@Psi
-            Theta_empty = C_empty@Psi
-            y_zero = C_zero@signal_refst
-            y_empty = C_empty@signal_refst
-            
-            beta_hat = np.linalg.inv(Theta_zero.T@Theta_zero)@Theta_zero.T@y_zero
-            y_empty_hat = Theta_empty@beta_hat
-            
-            loc_empty = np.argwhere(C_empty==1)[0][-1]
-            reconstruction_error_empty[loc_empty] = [np.round(np.sqrt(mean_squared_error(y_empty[i,:],y_empty_hat[i,:])),2) for i in range(y_empty.shape[0])]
-    
-    
-        
-        
-        
-    return reconstruction_error_empty
 
 #%% estimations
 def beta_KKT(C_eps,C_zero,Theta_eps,Theta_zero,signal_refst,signal_lcs):
@@ -307,7 +157,171 @@ def save_results(objective_function,reconstruction_error_empty,optimal_locations
     print(f'Results saved: {results_path}')
     
     return
-#%%
+#%% random placement functions
+def locations_random(p_eps,p_zero,p_empty,n,num_samples=10):
+    locations = np.arange(n)
+    random_locations = {el:0 for el in np.arange(num_samples)}
+    rng = np.random.default_rng(seed=92)
+    for i in np.arange(num_samples):
+        rng.shuffle(locations)
+        loc_eps = np.sort(locations[:p_eps])
+        loc_zero = np.sort(locations[p_eps:-p_empty])
+        loc_empty = np.sort(locations[-p_empty:])
+        random_locations[i] = [loc_eps,loc_zero,loc_empty]
+    
+    return random_locations
+
+def class_locations(M,n):
+    """
+    Sensor placement loctions for a specific class
+
+    Parameters
+    ----------
+    M : np.array (n,m)
+        Matrix with canonical vectors in R^n to sample from
+    n : int
+        Number of locations to sample
+    Returns
+    -------
+    arr : list
+        list of all possible sensor combinations
+    """
+    placements = itertools.combinations(M,n)
+    arr = []
+    for m in placements:
+        arr.append(np.array(m))
+    return arr
+
+def class_complementary_locations(C1,n):
+    """
+    Locations of complementary positions of distribution given by C
+    """
+    Id =  np.identity(n)
+    arr = []
+    for C1_ in C1:
+        C2 = Id.copy()
+        for i in np.argwhere(C1_==1):
+            C2[i[1],i[1]] = 0
+        C2 = C2[C2.sum(axis=1)==1,:]
+        arr.append(C2)
+    return arr
+
+def empty_locations(In,C1,C2):
+    """
+    Return locations not ocupied neither by class 1 nor by class 2
+
+    Parameters
+    ----------
+    In : np array (n,n)
+        Identity matrix
+    C1 : np array(p1,n)
+    C2 : np.array (p2,n)
+
+    Returns
+    -------
+    C3 : np.array(p3,n)
+    """
+    
+    C3 = In.copy()
+    for i in np.argwhere(C1==1):
+        C3[i[1],i[1]] = 0
+    for i in np.argwhere(C2==1):
+        C3[i[1],i[1]] = 0
+    C3 = C3[C3.sum(axis=1)==1,:]
+
+    return C3
+    
+def sensors_distributions(n,p1,p2,p3):
+    """
+    All possible distributions of sensor locations
+    """
+    In = np.identity(n)
+    C1 = class_locations(In,p1)
+    C1c = class_complementary_locations(C1,n)
+    C2 = []
+    C3 = []
+    if p3 != 0:
+        for idx in range(len(C1c)):
+            c1_ = C1c[idx]
+            c2 = class_locations(c1_,p2)
+            c3 = []
+            for c2_ in c2:
+                c3_ = empty_locations(In,C1[idx],c2_)
+                c3.append(c3_)
+            C2.append(c2)
+            C3.append(c3)
+    
+    else:
+        C2 = C1c.copy()
+    return C1,C2,C3
+
+def randomPlacement(n,p_eps,p_zero,p_empty,sigma_eps,sigma_zero,Psi,signal_lcs,signal_refst,var_ratio,num_samples=10):
+    """
+    Draw random locations for reconstruction
+    """
+    
+    random_locations = {}
+    C_eps_all, C_zero_all, C_empty_all = sensors_distributions(n,p_eps,p_zero,p_empty)
+    
+    rng = np.random.default_rng(seed=92)
+    locs = rng.integers(0,len(C_eps_all),num_samples)
+    
+    if p_eps!= 0:
+        reconstruction_error_empty = {('loc_eps','loc_empty'):'val'}
+        for i in locs:
+            C_eps = C_eps_all[i]
+            C_zero_ = C_zero_all[i]
+            C_empty_ = C_empty_all[i]
+            
+            j = rng.integers(0,len(C_empty_))
+            C_zero = C_zero_[j]
+            C_empty = C_empty_[j]
+
+            # define theta
+            Theta_eps = C_eps@Psi
+            Theta_zero = C_zero@Psi
+            Theta_empty = C_empty@Psi
+            # sample at locations
+            y_empty = C_empty@signal_refst
+                
+            beta_hat = beta_KKT(C_eps,C_zero,Theta_eps,Theta_zero,signal_refst,signal_lcs)
+            y_empty_hat = Theta_empty@beta_hat
+            
+            loc_zero = np.argwhere(C_zero==1)[:,-1]
+            loc_eps = np.argwhere(C_eps==1)[:,-1]
+            loc_empty = np.argwhere(C_empty==1)[:,-1]
+            random_locations[i] = [loc_eps,loc_zero,loc_empty]
+            
+            reconstruction_error_empty[loc_eps,loc_empty] = [np.round(np.sqrt(mean_squared_error(y_empty[i,:],y_empty_hat[i,:])),2) for i in range(y_empty.shape[0])]
+
+    else:
+        reconstruction_error_empty = {('loc_empty'):'val'}
+        C_zero_ = C_zero_all[0]
+        C_empty_ = C_empty_all[0]
+        
+        for i in np.arange(len(C_empty_)):
+            
+            C_empty=C_empty_[i]
+            C_zero =C_zero_[i]
+            
+            Theta_zero = C_zero@Psi
+            Theta_empty = C_empty@Psi
+            y_zero = C_zero@signal_refst
+            y_empty = C_empty@signal_refst
+            
+            beta_hat = np.linalg.inv(Theta_zero.T@Theta_zero)@Theta_zero.T@y_zero
+            y_empty_hat = Theta_empty@beta_hat
+            
+            loc_empty = np.argwhere(C_empty==1)[0][-1]
+            reconstruction_error_empty[loc_empty] = [np.round(np.sqrt(mean_squared_error(y_empty[i,:],y_empty_hat[i,:])),2) for i in range(y_empty.shape[0])]
+    
+    
+        
+        
+        
+    return reconstruction_error_empty
+
+#%% Optimal procedure
 def locations_vs_lambdas(Psi,p_eps,p_zero,p_empty,sigma_eps,sigma_zero,signal_lcs,signal_refst):
     """
     Optimal locations fopund via D-optimal convex relaxation
@@ -417,7 +431,9 @@ def KKT_cov(locations,Psi,sigma_eps):
     Compute residuals covariance for the KKT algorithm of the estimator
     """
     reg_param = locations.keys()
-    residuals_cov = {el:0 for el in reg_param}
+    Covariance_beta = {el:0 for el in reg_param}
+    Covariance_res = {el:0 for el in reg_param}
+    Trace_res = {el:0 for el in reg_param}
     
     # covariances
     for l in reg_param:
@@ -437,15 +453,114 @@ def KKT_cov(locations,Psi,sigma_eps):
             Sigma_beta = beta_cov(Theta_eps,Theta_zero,Psi,sigma_eps)
             Sigma_residuals = Psi@Sigma_beta@Psi.T
             
+            Covariance_beta[l] = Sigma_beta
+            Covariance_res[l] = Sigma_residuals
+            Trace_res[l] = np.trace(Sigma_residuals)
+            
         elif p_eps == 0: # reconstruct using only Ref.St.
             
             # Exact OLS
             
             Sigma_beta = np.zeros(shape=(Psi.shape[0],Psi.shape[0])) 
             Sigma_residuals = Psi@Sigma_beta@Psi.T
+            
+            Covariance_beta[l] = Sigma_beta
+            Covariance_res[l] = Sigma_residuals
+            Trace_res[l] = np.trace(Sigma_residuals)
+            
+            
+    return Covariance_beta, Covariance_res, Trace_res
+#%% plots
+def plot_trace(Trace_optimal,Trace_random,p_eps,p_zero,p_empty,r,save=False):
+    lambdas = Trace_optimal.keys()
+    random_vals = [ i for i in Trace_residuals_random.values()]
+    
+    figx,figy = 3.5,2.5
+    fs = 10
+    
+    fig = plt.figure(figsize=(figx,figy))
+    ax = fig.add_subplot(111)
+    ax.plot(np.arange(0,len(lambdas)),Trace_optimal.values(),marker='o',color='#1f618d',label='Trace of convex opt. results')
+    ax.fill_between(x=np.arange(0,len(lambdas)),y1=np.min(random_vals),y2 = np.max(random_vals),color='#ca6f1e',alpha=0.5,label=f'{len(Trace_random)} random placements')
+    
+    ax.legend(loc='upper right',fontsize=fs)
+    ax.set_xticks(np.arange(len(lambdas)))
+    ax.set_xticklabels(labels=lambdas,fontsize=fs)
+    ax.set_xlabel('Regularization parameter $\lambda$',fontsize=fs)
+    
+    ax.set_yticklabels(ax.get_yticks(),fontsize=fs)
+    ax.set_ylabel('Tr $\Sigma_{\hat{e}}$',fontsize=fs)
+    ax.set_title(f'Convex optimization results vs random placements\n {p_eps+p_zero+p_empty} locations, {r} eigenmodes, {p_eps} LCSs, {p_zero} Ref.st. {p_empty} Empty locations',fontsize=fs)
+    
+    ax.grid()
+    fig.tight_layout()
+    if save:
+        fname = f'{results_path}Plot_trace_vs_lambda_RandomLocations_{p_eps}LCS_{p_zero}RefSt_{p_empty}Empty_{r}eigenmodes.png'
+        plt.savefig(fname,dpi=600,format='png')
+    
+    
+    return fig
 
-    return Sigma_beta, Sigma_residuals
 
+def plot_covariances(Covariance_optimal,Covariance_random,Trace_optimal,Trace_random,n):
+    """
+    Plot residuals covariance matrices for different regularization parameters and compare them
+    with random placements
+    """
+    lambdas = [i for i in Covariance_optimal.keys()]
+    Traces_optimal = [i for i in Trace_optimal.values()]
+    Traces_random = [i for i in Trace_random.values()]
+    
+    Trace_optimal_max = np.argmax(Traces_optimal)# only keeps first occurrence
+    Trace_optimal_min = np.argmin(Traces_optimal)
+    Trace_random_max = np.argmax(Traces_random)
+    Trace_random_min = np.argmin(Traces_random)
+    
+    # plot minimum and maximum covariances
+    Covariance_optimal_min = Covariance_optimal[lambdas[Trace_optimal_min]]
+    Covariance_optimal_max = Covariance_optimal[lambdas[Trace_optimal_max]]
+    Covariance_random_min = Covariance_random[Trace_random_min]
+    Covariance_random_max = Covariance_random[Trace_random_max]
+    global_min = np.min([Covariance_optimal_min.min(),Covariance_optimal_max.min(),Covariance_random_min.min(),Covariance_random_max.min()])
+    global_max = np.max([Covariance_optimal_min.max(),Covariance_optimal_max.max(),Covariance_random_min.max(),Covariance_random_max.max()])
+    
+    figx,figy = 3.5,2.5
+    fs = 10
+    
+    fig = plt.figure(figsize=(figx,figy))
+
+    ax = fig.add_subplot(221)
+    im = ax.imshow(Covariance_optimal_max,vmin = global_min, vmax = global_max,cmap='Oranges')
+    ax.set_title(f'Max Tr $\Sigma_e$, $\lambda$= {lambdas[Trace_optimal_max]}',fontsize=fs)
+    ax.set_xticks(np.arange(n,step=5))
+    ax.set_yticks(np.arange(n,step=5))
+    
+    ax1 = fig.add_subplot(222)
+    im1 = ax1.imshow(Covariance_optimal_min,vmin = global_min, vmax = global_max,cmap='Oranges')
+    ax1.set_title(f'Min Tr $\Sigma_e$, $\lambda$ = {lambdas[Trace_optimal_min]}',fontsize=fs)
+    ax1.set_xticks(np.arange(n,step=5))
+    ax1.set_yticks(np.arange(n,step=5))
+    
+    ax2 = fig.add_subplot(223)
+    im2 = ax2.imshow(Covariance_random_max,vmin = global_min, vmax = global_max,cmap='Oranges')
+    ax2.set_title(f'Max Tr $\Sigma_e$ random',fontsize=fs)
+    ax2.set_xticks(np.arange(n,step=5))
+    ax2.set_yticks(np.arange(n,step=5))
+    
+    ax3 = fig.add_subplot(224)
+    im3 = ax3.imshow(Covariance_random_min,vmin = global_min, vmax = global_max,cmap='Oranges')
+    ax3.set_title(f'Min Tr $\Sigma_e$ random',fontsize=fs)
+    ax3.set_xticks(np.arange(n,step=5))
+    ax3.set_yticks(np.arange(n,step=5))
+    
+    # color bar
+    fig.subplots_adjust(right=0.8)
+    cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+    fig.colorbar(im, cax=cbar_ax)
+    
+    fig.tight_layout()
+        
+    return fig
 #%%
 
 if __name__=='__main__':
@@ -463,7 +578,7 @@ if __name__=='__main__':
     a = np.diag(S)@Vt
     
     #sparsity
-    r = 18
+    r = n-2
     Psi = U[:,:r]
     a_sparse = a.copy()
     a_sparse[r:,:] = np.zeros(shape=(a_sparse[r:,:].shape))
@@ -486,7 +601,6 @@ if __name__=='__main__':
     
     print(f'Sensor placement parameters\n{n} locations\n{r} eigenmodes\n{p_eps+p_zero} sensors in total\n{p_eps} LCSs - variance = {var_eps:.2e}\n{p_zero} Ref.St. - variance = {var_zero:.2e}\n{p_empty} Empty locations')
     check_consistency(n,r,p_zero,p_eps,p_empty)
-    
     input('Press Enter to continue...')
     
     print('Solving Convex Optimization problem')
@@ -501,7 +615,7 @@ if __name__=='__main__':
     
     reconstruction_error_full, reconstruction_error_zero, reconstruction_error_eps, reconstruction_error_empty = KKT_estimations(optimal_locations,p_eps,p_zero,n,var_eps,X_sparse,X_eps)
    
-    Sigma_beta, Sigma_residuals = KKT_cov(optimal_locations,Psi,var_eps)
+    Sigma_beta, Sigma_residuals, Trace_residuals = KKT_cov(optimal_locations,Psi,var_eps)
     
 
     print('Objective function\nLambda\t val')
@@ -514,20 +628,12 @@ if __name__=='__main__':
 
     #save_results(objective_func,reconstruction_error_empty,locations,p_eps,p_zero,p_empty,r,var_ratio,results_path)
     
-    # print('Random placement')
-    # reconstruction_error_empty_random = randomPlacement(
-    #     n,
-    #     p_eps,
-    #     p_zero,
-    #     p_empty,
-    #     var_eps,
-    #     var_zero,
-    #     Psi,
-    #     X_eps,
-    #     X_sparse,
-    #     var_ratio=var_ratio,
-    #     save=True)
+    print('Random placement')
+    random_locations = locations_random(p_eps,p_zero,p_empty,n,num_samples=100)
+    reconstruction_error_full_random, reconstruction_error_zero_random, reconstruction_error_eps_random, reconstruction_error_empty_random = KKT_estimations(random_locations,p_eps,p_zero,n,var_eps,X_sparse,X_eps)
+    Sigma_beta_random, Sigma_residuals_random, Trace_residuals_random = KKT_cov(random_locations,Psi,var_eps)
     
+        
     # print('empty_loc\t RMSE')
     # for k,val in zip(reconstruction_error_empty_random.keys(),reconstruction_error_empty_random.values()):
     #     print(f'{k}\t {val}')
@@ -535,6 +641,11 @@ if __name__=='__main__':
     # fname = f'ReconstructionErrorEmpty_Randomplacement_RefSt{p_zero}_LCS{p_eps}_Empty{p_empty}_r{r}_varRatio{var_ratio}.pkl'
     # with open(results_path+fname, 'wb') as handle:
     #     pickle.dump(reconstruction_error_empty, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    # plot
+    print('Plotting results')
+    fig_trace = plot_trace(Trace_residuals,Trace_residuals_random,p_eps,p_zero,p_empty,r)
+    fig_covariances = plot_covariances(Sigma_residuals,Sigma_residuals_random,Trace_residuals,Trace_residuals_random,n)
     
     
     print('------------\nAll Finished\n------------')

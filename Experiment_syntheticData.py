@@ -15,17 +15,234 @@ import numpy as np
 from scipy import linalg
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
 import cvxpy as cp
 import matplotlib.pyplot as plt
 import pickle
 import warnings
 
+from scipy.spatial.distance import squareform, pdist
+
 import SensorPlacementMethods as SPM
+#%% Network creation
+class DataSet():
+    def __init__(self,n):
+        self.n = n
+        
+    def generate_points(self):
+        """
+        Generate random points in space (nodes of the graph)
+        """
+        # genrate random points in plane and get neighbors
+        rng = np.random.default_rng(seed=92)
+        self.points = rng.uniform(0.0,1.0,(self.n,2))
+        self.dist = squareform(pdist(self.points,metric='euclidean'))
+        
+    def generate_cluster_graph(self,num_clusters,plot_graph=True):
+        self.num_clusters = num_clusters
+        p = self.points
+        
+        #Cluster the points
+        kmeans = KMeans(n_clusters=num_clusters).fit(p)
+        labels = kmeans.labels_
+        
+        # create Graph object
+        G = nx.Graph()
+        for i in range(self.n):
+            G.add_node(i,pos=p[i],cluster=labels[i])
+        for i in range(self.n):
+            for j in range(i+1,self.n):
+                if labels[i] == labels[j]:
+                    G.add_edge(i,j,weight=self.dist[i,j])
+        
+        self.G = G
+        
+        # plot
+        if plot_graph:
+            fig = plt.figure(figsize=(3.5,2.5))
+            ax = fig.add_subplot(111)
+            pos = {i: G.nodes[i]['pos'] for i in range(self.n)}
+            nx.draw(G, pos, node_color=[G.nodes[i]['cluster'] for i in range(self.n)], with_labels=True)
+            ax.set_title(f'Graph with {self.num_clusters} clusters')
+            
+        
+    def Generate_NeighborsGraph(self,a=0.0,b=1.0,n_neighbors=1,dist_based=True):
+        """
+        Create graph from K-nearest neighbors
+        """
+        k = n_neighbors + 1
+        dist = self.dist
+        
+        # count connections
+        neighbors = np.argsort(dist, axis=1)[:, 0:k]
+       
+        # # connect
+        # coords = np.zeros((n, k, 2, 2))
+        # for i in np.arange(n):
+        #     for j in np.arange(k):
+        #         coords[i, j, :, 0] = np.array([p[i,:][0], p[neighbors[i, j], :][0]])
+        #         coords[i, j, :, 1] = np.array([p[i,:][1], p[neighbors[i, j], :][1]])
+                
+        # create graph object
+        G = nx.Graph()
+        G.add_nodes_from(range(n,n))
+        for i in np.arange(neighbors.shape[0]):
+            for j in np.arange(1,neighbors.shape[1]):
+                G.add_edge(neighbors[i,0],neighbors[i,j])
+        
+        # store distance between nodes and graph
+        self.dist = dist
+        self.neighbors = neighbors
+        self.G = G
+        
+    def remove_GraphConnections(self,fraction=0.1,plot_graph=True):
+        """
+        Randomly remove connections.
+        Random nodes are sampled from the network and then the edge with the largest distance is removed
+        """
+        G = self.G
+        dist = self.dist
+        rng = np.random.default_rng(seed=0)
+        nodes_remove = rng.choice(G.nodes(),int(fraction*G.number_of_nodes()),replace=False)
+        # edges_remove = rng.choice(G.number_of_edges(),int(fraction*G.number_of_edges()),replace=False)
+        # for i, (u, v) in enumerate(G.edges()):
+        #     if i in edges_remove and G.degree()[u] > 1 and G.degree()[v]>1:# remove edges but avoid isolating nodes
+        #         G.remove_edge(u, v)
+        for node in nodes_remove:
+            node_neighbors = list(G.neighbors(node))
+            if len(node_neighbors)>1:# avoid leaving single nodes
+                largest_distance = np.max([dist[node,neighbor] for neighbor in node_neighbors])
+                sorted_neighbors = sorted(node_neighbors, key=lambda x: G.edges[(node, x)]['weight'])
+                G.remove_edge(node,sorted_neighbors[-1])
+        
+        self.G = G
+        
+        # plot
+        if plot_graph:
+            fig = plt.figure(figsize=(3.5,2.5))
+            ax = fig.add_subplot(111)
+            pos = {i: G.nodes[i]['pos'] for i in range(self.n)}
+            nx.draw(G, pos, node_color=[G.nodes[i]['cluster'] for i in range(self.n)], with_labels=True)
+            ax.set_title(f'Graph with {self.num_clusters} clusters')
+        
+        
+        
+        
+    def get_laplacian(self,dist_based=True,plot_laplacian=True):
+        """
+        Get the laplacian of the graph.
+        It can be dist_based: Adjacency matrix as a function of distance
+        or can count the number of neighbors connections
+        """
+        G = self.G
+        # laplacian
+        if dist_based:
+            dist = self.dist
+            W = np.exp((-dist**2)/(2*0.5)) # weight distance-based adjacency matrix
+            
+            A = (nx.adjacency_matrix(G)).toarray()
+            W = W*A 
+            
+            D = np.diag(W.sum(axis=0))
+            L = D-W
+        
+        else:
+            #A = (nx.adjacency_matrix(G)).toarray()
+            #D = np.diag([val for (node,val) in G.degree()])
+            L = (nx.laplacian_matrix(G)).toarray() # same as D-A,obviously
+        
+        self.L = L
+        
+        if plot_laplacian:
+            fig = plt.figure(figsize=(3.5,2.5))
+            ax = fig.add_subplot(111)
+            im = ax.imshow(self.L,vmin=self.L.min(),vmax=self.L.max(),cmap='Blues')
+            cbar = plt.colorbar(im)
+            ax.set_title('Graph laplacian')
+            
+    def sample_from_graph(self,num_samples=1):
+        """
+        get samples from graph
+        If num_samples is larger than 1 then it samples multiple measurements,
+        thus creating a snapshots matrix
+        """
+        CovMat = np.linalg.pinv(self.L)
+        #np.fill_diagonal(CovMat,1)
+        rng = np.random.default_rng(seed=100)
+        self.x = rng.multivariate_normal(mean=np.zeros(n), cov=CovMat,size=(num_samples)).T
+        
+    def plot_network(self):
+        L = self.L
+        G = self.G
+        # show graph
+        fig = plt.figure(figsize=(3.5,2.5))
+        ax = fig.add_subplot(111)
+        im = ax.imshow(L,vmin=L.min(),vmax=L.max())
+        cbar = plt.colorbar(im)
+        ax.set_title('Laplacian matrix')
+        
+        fig = plt.figure(figsize=(3.5,2.5))
+        ax = fig.add_subplot(111)
+        nx.draw_networkx(G)
+        ax.set_title(f'Graph built from {self.knn} nearest neighbors')
+        
+        
+        
 #%% data pre-processing
-def createData(mean,n,m):
+def Generate_graph(n,k,a=0.0,b=1.0,dist_based=True):
+    
+    # genrate random points in plane and get neighbors
+    rng = np.random.default_rng(seed=92)
+    p = rng.uniform(0.0,1.0,(n,2))
+    dist = squareform(pdist(p,metric='euclidean'))
+    
+    # count connections
+    neighbors = np.argsort(dist, axis=1)[:, 0:k]
+    # connect
+    coords = np.zeros((n, k, 2, 2))
+    for i in np.arange(n):
+        for j in np.arange(k):
+            coords[i, j, :, 0] = np.array([p[i,:][0], p[neighbors[i, j], :][0]])
+            coords[i, j, :, 1] = np.array([p[i,:][1], p[neighbors[i, j], :][1]])
+            
+    G = nx.Graph()
+    G.add_nodes_from(range(n,n))
+    for i in np.arange(neighbors.shape[0]):
+        for j in np.arange(1,neighbors.shape[1]):
+            G.add_edge(neighbors[i,0],neighbors[i,j])
+            
+    # laplacian
+    if dist_based:
+        A = (nx.adjacency_matrix(G)).toarray()
+        W = np.exp((-dist**2)/(2*0.5)) # weight distance-based adjacency matrix
+        #W = W*A #?
+        D = np.diag(W.sum(axis=0))
+        L = D-W
+    
+    else:
+        #A = (nx.adjacency_matrix(G)).toarray()
+        #D = np.diag([val for (node,val) in G.degree()])
+        L = (nx.laplacian_matrix(G)).toarray() # same as D-A,obviously
+    
+    # show graph
+    fig = plt.figure(figsize=(3.5,2.5))
+    ax = fig.add_subplot(111)
+    im = ax.imshow(L,vmin=L.min(),vmax=L.max())
+    cbar = plt.colorbar(im)
+    ax.set_title('Laplacian matrix')
+    
+    fig = plt.figure(figsize=(3.5,2.5))
+    ax = fig.add_subplot(111)
+    nx.draw_networkx(G)
+    ax.set_title(f'Graph built from {k-1} nearest neighbors')
+    
+    return L
+
+def createData(mean,n,m,plot_graph=False):
     G=nx.fast_gnp_random_graph(n,0.5,seed=92)
     adj_matrix = nx.adjacency_matrix(G)
     M = adj_matrix.toarray()
+    M_ = M.copy()
     np.fill_diagonal(M, 1)
     
     rng = np.random.default_rng(seed=92)
@@ -34,6 +251,24 @@ def createData(mean,n,m):
     CovMat = np.multiply(sigmas,M)
     np.fill_diagonal(CovMat,np.ones(CovMat.shape[0]))
     X = rng.multivariate_normal(mean, CovMat, m).T
+    
+    if plot_graph:
+        fig = plt.figure()
+        ax = fig.add_subplot(121)
+        ax.imshow(M_,cmap='gray')
+        ax.set_title('Graph adjacency matrix')
+        
+        ax1 = fig.add_subplot(122)
+        im1 = ax1.imshow(CovMat)
+        fig.colorbar(im1)
+        ax1.set_title('Graph covariance matrix')
+        
+        fig1 = plt.figure()
+        ax = fig1.add_subplot(111)
+        nx.draw_networkx(G)
+        plt.show(block=False)
+        plt.pause(0.001)
+
     
     return X
 
@@ -131,9 +366,11 @@ def beta_cov(Theta_eps,Theta_zero,Psi,var_eps):
 
 def check_consistency(n,r,p_zero,p_eps,p_empty):
     if p_zero + p_eps < r:
-        raise Warning(f'The assumptions on the KKT probelm (left-invertibility of [Theta_eps;Theta_zero] == linearly independent columns) impose that the number of eigenmodes has to be smaller than the number of sensors.\nReceived:Eigemodes: {r}\nSensors: {p_zero + p_eps}')
+        raise Warning(f'The assumptions on the KKT probelm (left-invertibility of [Theta_eps;Theta_zero] == linearly independent columns) impose that the number of eigenmodes has to be smaller than the number of sensors.\nReceived:\nEigenmodes: {r}\nSensors: {p_zero + p_eps}')
     if p_zero > r:
         raise Warning(f'The assumptions on the KKT problem (right-invertibility of Theta_zero == linearly independent rows) impose that the number of reference stations has to be smaller than the number of eigenmodes.\nReceived:\nRef.St: {p_zero}\nEigenmodes: {r}')
+    if p_zero + p_eps + p_empty != n:
+        raise Warning(f'Something seems wrong about the distribution of sensors:\n Ref.St ({p_zero}) + LCSs ({p_eps}) + Empty ({p_empty}) != number of locations (n)')
     if p_zero <= r and r <= p_zero + p_eps:
         print(f'Number of sensors pass consistency check: Ref.St ({p_zero}) <= r ({r}) <= Ref.St ({p_zero}) + LCSs ({p_eps})')
     return
@@ -471,16 +708,50 @@ def KKT_cov(locations,Psi,sigma_eps):
             
     return Covariance_beta, Covariance_res, Trace_res
 #%% plots
-def plot_trace(Trace_optimal,Trace_random,p_eps,p_zero,p_empty,r,save=False):
-    lambdas = Trace_optimal.keys()
-    random_vals = [ i for i in Trace_residuals_random.values()]
+def plot_locations_weights(weights,Trace_optimal,n):
+    """
+    Plot weights distribution for best (and worst?) trace results
+    after convex optimization relaxation experiment
+    """
+    lambdas = [i for i in weights.keys()]
+    idx_opt = np.argmin([i for i in Trace_optimal.values()])
+    weights_lcs, weights_zero = weights[lambdas[idx_opt]][0], weights[lambdas[idx_opt]][1]
     
     figx,figy = 3.5,2.5
     fs = 10
     
     fig = plt.figure(figsize=(figx,figy))
     ax = fig.add_subplot(111)
-    ax.plot(np.arange(0,len(lambdas)),Trace_optimal.values(),marker='o',color='#1f618d',label='Trace of convex opt. results')
+    ax.bar(np.arange(n),weights_lcs,label='LCSs',color='#ca6f1e')
+    ax.bar(np.arange(n),-1*weights_zero,label='Ref. St.',color='#1f618d')
+    
+    ax.set_yticks(np.arange(-1,1.25,0.25))
+    ax.set_yticklabels(np.round(ax.get_yticks(),1),fontsize=fs)
+    ax.set_ylabel('Weight',fontsize=fs)
+    
+    ax.set_xticks(np.arange(0,n,5))
+    ax.set_xticklabels(ax.get_xticks(),fontsize=fs)
+    ax.set_xlabel('Location index',fontsize=fs)
+    ax.legend(loc='upper right')
+    
+    fig.tight_layout()
+    
+    return fig
+
+def plot_trace(Trace_optimal,Trace_random,p_eps,p_zero,p_empty,r,save=False):
+    """
+    Plot Trace of residuals covariance matrix for different values of regularization parameter
+    Compares the results with random sampling
+    """
+    lambdas = Trace_optimal.keys()
+    random_vals = [ i for i in Trace_random.values()]
+    
+    figx,figy = 3.5,2.5
+    fs = 10
+    
+    fig = plt.figure(figsize=(figx,figy))
+    ax = fig.add_subplot(111)
+    ax.plot(np.arange(0,len(lambdas)),np.round([i for i in Trace_residuals.values()],4),marker='o',color='#1f618d',label='Trace of convex opt. results')
     ax.fill_between(x=np.arange(0,len(lambdas)),y1=np.min(random_vals),y2 = np.max(random_vals),color='#ca6f1e',alpha=0.5,label=f'{len(Trace_random)} random placements')
     
     ax.legend(loc='upper right',fontsize=fs)
@@ -488,7 +759,8 @@ def plot_trace(Trace_optimal,Trace_random,p_eps,p_zero,p_empty,r,save=False):
     ax.set_xticklabels(labels=lambdas,fontsize=fs)
     ax.set_xlabel('Regularization parameter $\lambda$',fontsize=fs)
     
-    ax.set_yticklabels(ax.get_yticks(),fontsize=fs)
+    ax.set_yticks(np.linspace(start=0.0, stop=np.round(np.max(random_vals)),num=5))
+    ax.set_yticklabels(np.round(ax.get_yticks(),2),fontsize=fs)
     ax.set_ylabel('Tr $\Sigma_{\hat{e}}$',fontsize=fs)
     ax.set_title(f'Convex optimization results vs random placements\n {p_eps+p_zero+p_empty} locations, {r} eigenmodes, {p_eps} LCSs, {p_zero} Ref.st. {p_empty} Empty locations',fontsize=fs)
     
@@ -502,7 +774,7 @@ def plot_trace(Trace_optimal,Trace_random,p_eps,p_zero,p_empty,r,save=False):
     return fig
 
 
-def plot_covariances(Covariance_optimal,Covariance_random,Trace_optimal,Trace_random,n):
+def plot_covariances(Covariance_optimal,Covariance_random,Trace_optimal,Trace_random,n,locations_optimal,locations_random):
     """
     Plot residuals covariance matrices for different regularization parameters and compare them
     with random placements
@@ -511,6 +783,7 @@ def plot_covariances(Covariance_optimal,Covariance_random,Trace_optimal,Trace_ra
     Traces_optimal = [i for i in Trace_optimal.values()]
     Traces_random = [i for i in Trace_random.values()]
     
+    # min/max occurrence ofr different lambda & randomness
     Trace_optimal_max = np.argmax(Traces_optimal)# only keeps first occurrence
     Trace_optimal_min = np.argmin(Traces_optimal)
     Trace_random_max = np.argmax(Traces_random)
@@ -531,34 +804,80 @@ def plot_covariances(Covariance_optimal,Covariance_random,Trace_optimal,Trace_ra
 
     ax = fig.add_subplot(221)
     im = ax.imshow(Covariance_optimal_max,vmin = global_min, vmax = global_max,cmap='Oranges')
-    ax.set_title(f'Max Tr $\Sigma_e$, $\lambda$= {lambdas[Trace_optimal_max]}',fontsize=fs)
-    ax.set_xticks(np.arange(n,step=5))
-    ax.set_yticks(np.arange(n,step=5))
+    ax.set_title(f'Max Tr $\Sigma_e$ ($\lambda$= {lambdas[Trace_optimal_max]}) = {Traces_optimal[Trace_optimal_max]:.2f}',fontsize=fs)
+    loc = np.sort(np.concatenate([locations_optimal[lambdas[Trace_optimal_max]][0],locations_optimal[lambdas[Trace_optimal_max]][-1]]))
+    ax.set_xticks(loc)
+    ax.set_yticks(loc)
+    ax.set_xticklabels(ax.get_xticks(),fontsize=fs)
+    ax.set_yticklabels(ax.get_xticks(),fontsize=fs)
+    # identify LCSs
+    for t in ax.get_xticks():
+        if t in locations_optimal[lambdas[Trace_optimal_max]][0]:# change only LCSs locations
+            idx = np.argwhere(t == ax.get_xticks())[0,0]    
+            ax.get_xticklabels()[idx].set_color('red')
+            ax.get_yticklabels()[idx].set_color('red')
+            
     
     ax1 = fig.add_subplot(222)
     im1 = ax1.imshow(Covariance_optimal_min,vmin = global_min, vmax = global_max,cmap='Oranges')
-    ax1.set_title(f'Min Tr $\Sigma_e$, $\lambda$ = {lambdas[Trace_optimal_min]}',fontsize=fs)
-    ax1.set_xticks(np.arange(n,step=5))
-    ax1.set_yticks(np.arange(n,step=5))
+    ax1.set_title(f'Min Tr $\Sigma_e$ ($\lambda$ = {lambdas[Trace_optimal_min]}) = {Traces_optimal[Trace_optimal_min]:.2f}',fontsize=fs)
+    loc = np.sort(np.concatenate([locations_optimal[lambdas[Trace_optimal_min]][0],locations_optimal[lambdas[Trace_optimal_min]][-1]]))
+    ax1.set_xticks(loc)
+    ax1.set_yticks(loc)
+    ax1.set_xticklabels(ax1.get_xticks(),fontsize=fs)
+    ax1.set_yticklabels(ax1.get_xticks(),fontsize=fs)
+    
+    for t in ax1.get_xticks():
+        if t in locations_optimal[lambdas[Trace_optimal_min]][0]:
+            idx = np.argwhere(t == ax1.get_xticks())[0,0]
+            ax1.get_xticklabels()[idx].set_color('red')
+            ax1.get_yticklabels()[idx].set_color('red')
+    
     
     ax2 = fig.add_subplot(223)
     im2 = ax2.imshow(Covariance_random_max,vmin = global_min, vmax = global_max,cmap='Oranges')
-    ax2.set_title(f'Max Tr $\Sigma_e$ random',fontsize=fs)
-    ax2.set_xticks(np.arange(n,step=5))
-    ax2.set_yticks(np.arange(n,step=5))
+    ax2.set_title(f'Max Tr $\Sigma_e$ random = {Traces_random[Trace_random_max]:.2f}',fontsize=fs)
+    loc = np.sort(np.concatenate([locations_random[Trace_random_max][0],locations_random[Trace_random_max][-1]]))
+    ax2.set_xticks(loc)
+    ax2.set_yticks(loc)
+    ax2.set_xticklabels(ax2.get_xticks(),fontsize=fs)
+    ax2.set_yticklabels(ax2.get_xticks(),fontsize=fs)
+    
+    
+    for t in ax2.get_xticks():
+        if t in locations_random[Trace_random_max][0]:
+            idx = np.argwhere(t == ax2.get_xticks())[0,0]
+            ax2.get_xticklabels()[idx].set_color('red')
+            ax2.get_yticklabels()[idx].set_color('red')
+            
     
     ax3 = fig.add_subplot(224)
     im3 = ax3.imshow(Covariance_random_min,vmin = global_min, vmax = global_max,cmap='Oranges')
-    ax3.set_title(f'Min Tr $\Sigma_e$ random',fontsize=fs)
-    ax3.set_xticks(np.arange(n,step=5))
-    ax3.set_yticks(np.arange(n,step=5))
+    ax3.set_title(f'Min Tr $\Sigma_e$ random = {Traces_random[Trace_random_min]:.2f}',fontsize=fs)
+    loc = np.sort(np.concatenate([locations_random[Trace_random_min][0],locations_random[Trace_random_min][-1]]))
+    ax3.set_xticks(loc)
+    ax3.set_yticks(loc)
+    ax3.set_xticklabels(ax3.get_xticks(),fontsize=fs)
+    ax3.set_yticklabels(ax3.get_xticks(),fontsize=fs)
     
+    
+    for t in ax3.get_xticks():
+        if t in locations_random[Trace_random_min][0]:
+            idx = np.argwhere(t == ax3.get_xticks())[0,0]
+            ax3.get_xticklabels()[idx].set_color('red')
+            ax3.get_yticklabels()[idx].set_color('red')
+    
+    plt.suptitle(f'Convex optimization results vs random placements\n {p_eps+p_zero+p_empty} locations, {r} eigenmodes, {p_eps} LCSs, {p_zero} Ref.st. {p_empty} Empty locations',fontsize=fs)
+
+    fig.tight_layout()
     # color bar
     fig.subplots_adjust(right=0.8)
     cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-    fig.colorbar(im, cax=cbar_ax)
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    #cbar.set_ticks([mn,md,mx])
+    #cbar.set_ticklabels([mn,md,mx])
     
-    fig.tight_layout()
+    
         
     return fig
 #%%
@@ -568,24 +887,42 @@ if __name__=='__main__':
     file_path = os.path.abspath(os.path.join(abs_path,os.pardir)) + '/Files/'
     results_path = os.path.abspath(os.path.join(abs_path,os.pardir)) + '/Results/'
     
-    n,m = 20,100# num_stations,num_snapshots
-
-    X = createData(np.zeros(shape=(n)), n, m)
+    # =============================================================================
+    #   Generate Data set
+    # =============================================================================
+    
+    n,m = 500,1000# num_stations,num_snapshots
+    # create network
+    ds = DataSet(n)
+    ds.generate_points()
+    ds.generate_cluster_graph(num_clusters=2,plot_graph=False)
+    ds.remove_GraphConnections(fraction=0.5,plot_graph=True)
+    ds.get_laplacian(dist_based=True,plot_laplacian=True)
+    ds.sample_from_graph(num_samples=m)
+    X = ds.x # snapshots matrix
+    # X = createData(np.zeros(shape=(n)), n, m,plot_graph=True)
+    
+    # =============================================================================
+    #   Get reduced basis
+    # =============================================================================
+    
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    
     U,S,Vt = np.linalg.svd(X_scaled,full_matrices=False)
-    a = np.diag(S)@Vt
+    beta = np.diag(S)@Vt
     
     #sparsity
-    r = n-2
+    r = 290
     Psi = U[:,:r]
-    a_sparse = a.copy()
-    a_sparse[r:,:] = np.zeros(shape=(a_sparse[r:,:].shape))
-    X_sparse = U@a_sparse # = Psi@a[:r,:]
+    beta_sparse = beta.copy()
+    beta_sparse[r:,:] = np.zeros(shape=(beta_sparse[r:,:].shape))
+    X_sparse = U@beta_sparse # = Psi@beta[:r,:]
+    
+    # =============================================================================
+    #   Sensors parameters
+    # =============================================================================
     
     # Refst and LCS
-    
     var_eps = 1
     var_zero = 1e-3
     var_ratio = var_zero/var_eps #should be <1
@@ -594,15 +931,18 @@ if __name__=='__main__':
     X_zero = Perturbate_data(X_sparse,noise=var_zero)
     
     # number of sensors
-    p = n-1 #total
-    p_zero = p-2
-    p_eps = 2
-    p_empty = n-(p_zero+p_eps)
+    p = n-300 #total
+    p_eps = 200 #LCSs
+    p_zero = 100#p-p_eps # Ref.St.
+    p_empty = n-(p_zero+p_eps) #no-sensor
     
     print(f'Sensor placement parameters\n{n} locations\n{r} eigenmodes\n{p_eps+p_zero} sensors in total\n{p_eps} LCSs - variance = {var_eps:.2e}\n{p_zero} Ref.St. - variance = {var_zero:.2e}\n{p_empty} Empty locations')
     check_consistency(n,r,p_zero,p_eps,p_empty)
     input('Press Enter to continue...')
     
+    # =============================================================================
+    #     Convex relaxation
+    # =============================================================================
     print('Solving Convex Optimization problem')
     weights, optimal_locations, obj_function = locations_vs_lambdas(Psi,
                                                                    p_eps,
@@ -613,6 +953,7 @@ if __name__=='__main__':
                                                                    X_eps,
                                                                    X_sparse)
     
+    # reconstruction
     reconstruction_error_full, reconstruction_error_zero, reconstruction_error_eps, reconstruction_error_empty = KKT_estimations(optimal_locations,p_eps,p_zero,n,var_eps,X_sparse,X_eps)
    
     Sigma_beta, Sigma_residuals, Trace_residuals = KKT_cov(optimal_locations,Psi,var_eps)
@@ -628,6 +969,10 @@ if __name__=='__main__':
 
     #save_results(objective_func,reconstruction_error_empty,locations,p_eps,p_zero,p_empty,r,var_ratio,results_path)
     
+    # =============================================================================
+    #     Random placement
+    # =============================================================================
+    
     print('Random placement')
     random_locations = locations_random(p_eps,p_zero,p_empty,n,num_samples=100)
     reconstruction_error_full_random, reconstruction_error_zero_random, reconstruction_error_eps_random, reconstruction_error_empty_random = KKT_estimations(random_locations,p_eps,p_zero,n,var_eps,X_sparse,X_eps)
@@ -642,10 +987,15 @@ if __name__=='__main__':
     # with open(results_path+fname, 'wb') as handle:
     #     pickle.dump(reconstruction_error_empty, handle, protocol=pickle.HIGHEST_PROTOCOL)
     
+    # =============================================================================
+    #     Graphics
+    # =============================================================================
+    
     # plot
     print('Plotting results')
+    fig_weights = plot_locations_weights(weights,Trace_residuals,n)
     fig_trace = plot_trace(Trace_residuals,Trace_residuals_random,p_eps,p_zero,p_empty,r)
-    fig_covariances = plot_covariances(Sigma_residuals,Sigma_residuals_random,Trace_residuals,Trace_residuals_random,n)
+    fig_covariances = plot_covariances(Sigma_residuals,Sigma_residuals_random,Trace_residuals,Trace_residuals_random,n,optimal_locations,random_locations)
     
     
     print('------------\nAll Finished\n------------')

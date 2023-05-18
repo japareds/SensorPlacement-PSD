@@ -12,6 +12,7 @@ import itertools
 import numpy as np
 from scipy import linalg
 import cvxpy as cp
+import mosek
 #%%
 # def get_combinations(n, m):
 #     arr = []
@@ -206,14 +207,14 @@ def ConvexOpt(Psi,p,k=[],sensors = []):
                 C[i,np.sort(np.concatenate(locations))[i]] = 1
     
     return C,locations,beta.value
-
+#%%
 def ConvexOpt_limit(Psi,sigma1,sigma2,p1,p2,lambda_reg = 0.0):
     """
     Convex optimization for sensor placement problem
     """
     n,r = Psi.shape
-    H1 = cp.Variable(n,nonneg=True,value=np.ones(n))
-    H2 = cp.Variable(n,nonneg=True,value=np.ones(n))
+    H1 = cp.Variable(n,nonneg=True,value=np.zeros(n))
+    H2 = cp.Variable(n,nonneg=True,value=np.zeros(n))
     Phi1 = Psi.T@cp.diag(H1)@Psi
     Phi2 = Psi.T@cp.diag(H2)@Psi
     
@@ -257,11 +258,79 @@ def ConvexOpt_limit(Psi,sigma1,sigma2,p1,p2,lambda_reg = 0.0):
     else:
         problem = cp.Problem(cp.Minimize(-1*obj),constraints)
     
-    problem.solve(verbose=True,max_iters=10000000)
+    problem.solve(verbose=True,max_iters=100000)#10000000 iters for corvengence lambda 1000
     H1_optimal = H1.value
     H2_optimal = H2.value
     
     return H1_optimal,H2_optimal,problem.value
+
+def ConvexOpt_SDP(Psi,p):
+    """
+    Semidefinite program solution for the sensor placement problem
+    Only one class of sensors (homoscedastic netowrk)
+    """
+    n,r = Psi.shape
+    t = cp.Variable(1,nonneg=True)
+    C = cp.Variable((p,n),nonneg=True,value=np.zeros((p,n)))
+    H = cp.Variable((n,n),nonneg=True,value=np.zeros((n,n)))#C.T@C
+    # Ip = cp.Constant(np.identity(p))
+    # M = cp.bmat([[H,C.T],[C,Ip]])
+    M = []
+    M1 = Psi.T@H@Psi
+    M2 = Psi.T@C.T
+    
+    for i in range(p):
+        M.append(cp.bmat([[M1,M2[:,i][:,None]],[(M2[:,i][:,None]).T,t[None]]]))
+      
+    constraints = []
+    constraints += [M[i]>>0 for i in range(p)]
+    # weights constraints
+    constraints += [C>=0,
+                    C<=1,
+                    cp.diag(H)>=0,
+                    cp.diag(H)<=1,
+                    cp.sum(cp.diag(H))==p,
+                    cp.sum(C,axis=1)==1,
+                    cp.sum(C,axis=0)<=1,
+                    cp.diag(H) == cp.sum(C,axis=0),
+                    H - cp.diag(cp.diag(H)) == 0
+                    ]
+    
+    problem = cp.Problem(cp.Minimize(t),constraints)
+    problem.solve(verbose=True)
+    
+    return H.value,C.value,problem.value
+
+
+def ConvexOpt_SDP_regressor(Psi,p):
+    """
+    Semidefinite program solution for the sensor placement problem
+    Only one class of sensors (homoscedastic netowrk)
+    """
+    n,r = Psi.shape
+    t = cp.Variable(1,nonneg=True)
+    H = cp.Variable((n),nonneg=True,value=np.zeros((n)))#C.T@C
+    # Ip = cp.Constant(np.identity(p))
+    # M = cp.bmat([[H,C.T],[C,Ip]])
+    M = []
+    M1 = Psi.T@cp.diag(H)@Psi
+    M2 = np.identity(p)
+    
+    for i in range(p):
+        M.append(cp.bmat([[M1,M2[:,i][:,None]],[(M2[:,i][:,None]).T,t[None]]]))
+      
+    constraints = []
+    constraints += [M[i]>>0 for i in range(p)]
+    # weights constraints
+    constraints += [cp.diag(H)>=0,
+                    cp.diag(H)<=1,
+                    cp.sum(cp.diag(H))==p
+                    ]
+    
+    problem = cp.Problem(cp.Minimize(t),constraints)
+    problem.solve(verbose=True)
+    
+    return H.value,problem.value
 
 def ConvexOpt_nuclearNorm(Psi,p2):
     n,r = Psi.shape

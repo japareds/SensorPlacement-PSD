@@ -13,6 +13,7 @@ import numpy as np
 from scipy import linalg
 import cvxpy as cp
 import mosek
+import warnings
 #%%
 # def get_combinations(n, m):
 #     arr = []
@@ -264,10 +265,85 @@ def ConvexOpt_limit(Psi,sigma1,sigma2,p1,p2,lambda_reg = 0.0):
     
     return H1_optimal,H2_optimal,problem.value
 
+def diag_block_mat(L):
+    shp = L[0].shape
+    mask = np.kron(np.eye(len(L)), np.ones(shp))==1
+    out = np.zeros(np.asarray(shp)*len(L),dtype=int)
+    out[mask] = np.concatenate(L).ravel()
+    return out
+
+
+
+def ConvexOpt_LMI(Psi,p):
+    """
+    Semidefinite program solution to covariance minimizing
+    using sparse LMIs
+    """
+    n,r = Psi.shape
+    # variables
+    t = cp.Variable(1,nonneg=True,value=100*np.ones(1))
+    x = cp.Variable((n*p,1),nonneg=True,value=np.ones((n*p,1)))
+    # matrices
+    Bj = cp.bmat([[np.zeros((r,r)),np.zeros((r,1))],[np.zeros((1,r)),t[:,None]]])
+    Ip = np.identity(p)
+    R = [np.block([[Psi,np.zeros((n,1))],[np.zeros((p,r)),Ip[:,j][:,None]]]) for j in range(p) ]
+    # central sparse matrix
+    S = []
+    for i in range(p):
+        for j in range(n):
+            C = np.zeros((p,n))
+            C[i,j] = 1
+            S_k = np.block([[C.T@C,C.T],[C,Ip]])
+            S.append(S_k)
+    A_j = [R[j].T@S@R[j] for j in range(p)]
+    # construct single LMI
+    A_p = []
+    for j in range(p):
+        A_p.append(cp.sum([x[i]*A_j[j][i] for i in range(x.shape[0])]))
+    
+    LMI = []
+    for j in range(p):
+        LMI.append(cp.sum([A_p[j],Bj]))
+
+    # single LMI 
+    #B = cp.kron(np.eye(p),Bj)
+    
+    # linear constraints
+    R1 = np.zeros((p,n*p))
+    for i in range(p):
+        #R1[(i-1),(i-1)*n:i*n] = np.ones(n)
+        R1[i,i*n:(i*n+n)] = np.ones(n)
+        
+    R2 = np.tile(np.identity(n),p)
+    # constraints
+    constraints = []
+    ## LMIs
+    constraints += [LMI[i] >> 0 for i in range(p)]
+    ## weights
+    constraints += [np.zeros((n*p,1))<= x,
+                    x<= np.ones(((n*p),1)),
+                    cp.sum(x)==p,# sum of weights equal to number of sensors
+                    R1@x == np.ones((p,1)),#sum of sensor in space is 1: [cp.sum(x[(i-1)*n:i*n]) ==1 for i in range(1,n)]
+                    R2@x >= np.zeros((n,1)),
+                    R2@x <= np.ones((n,1))# sum of sensors weights at single location lower than 1
+        ]
+    obj = cp.Minimize(t)
+    prob = cp.Problem(obj,constraints)
+    if not prob.is_dcp():
+        warnings.warn('Problem is not dcp')
+    else:
+        prob.solve(verbose=True)
+    
+    C = np.reshape(x.value,(p,n))
+    H = np.zeros((n,n))
+    np.fill_diagonal(H, (R2@x).value)
+    
+    return H,C,prob.value
+
 def ConvexOpt_SDP(Psi,p):
     """
     Semidefinite program solution for the sensor placement problem
-    Only one class of sensors (homoscedastic netowrk)
+    Only one class of sensors (homoscedastic network)
     """
     n,r = Psi.shape
     t = cp.Variable(1,nonneg=True)
@@ -285,10 +361,10 @@ def ConvexOpt_SDP(Psi,p):
     constraints = []
     constraints += [M[i]>>0 for i in range(p)]
     # weights constraints
-    constraints += [C>=0,
-                    C<=1,
-                    cp.diag(H)>=0,
-                    cp.diag(H)<=1,
+    constraints += [cp.diag(cp.vec(C))>=np.zeros((p*n,p*n)),
+                    cp.diag(cp.vec(C))<=np.identity(p*n),
+                    cp.diag(H)>=np.zeros(n),
+                    cp.diag(H)<=np.ones(n),
                     cp.sum(cp.diag(H))==p,
                     cp.sum(C,axis=1)==1,
                     cp.sum(C,axis=0)<=1,
@@ -314,13 +390,13 @@ def ConvexOpt_SDP_regressor(Psi,p):
     # M = cp.bmat([[H,C.T],[C,Ip]])
     M = []
     M1 = Psi.T@cp.diag(H)@Psi
-    M2 = np.identity(p)
+    M2 = np.identity(r)
     
-    for i in range(p):
+    for i in range(r):
         M.append(cp.bmat([[M1,M2[:,i][:,None]],[(M2[:,i][:,None]).T,t[None]]]))
       
     constraints = []
-    constraints += [M[i]>>0 for i in range(p)]
+    constraints += [M[i]>>0 for i in range(r)]
     # weights constraints
     constraints += [cp.diag(H)>=0,
                     cp.diag(H)<=1,
@@ -330,7 +406,7 @@ def ConvexOpt_SDP_regressor(Psi,p):
     problem = cp.Problem(cp.Minimize(t),constraints)
     problem.solve(verbose=True)
     
-    return H.value,problem.value
+    return np.diag(H.value),problem.value
 
 def ConvexOpt_nuclearNorm(Psi,p2):
     n,r = Psi.shape

@@ -230,9 +230,11 @@ def locations_SDP(Psi,p_eps,p_empty,n):
     Inequality expressed as LMI and solved using SDP
     """
     # SDP results
-    H_optimal,C_optimal,obj_value = SPM.ConvexOpt_SDP(Psi, p_eps)
+    H_optimal,C_optimal,obj_value = SPM.ConvexOpt_LMI(Psi, p_eps)
+    #H_optimal,obj_value = SPM.ConvexOpt_SDP_regressor(Psi,p)
     # optimal locations
     loc = np.sort(np.diag(H_optimal).argsort()[-p_eps:])
+    #loc = np.sort(C_optimal[0,:].argsort()[-p_eps:])
     loc_empty = np.sort([i for i in np.arange(0,n) if i not in loc])
     weights = np.diag(H_optimal)
     optimal_locations = [loc,loc_empty]
@@ -287,7 +289,7 @@ def OLS_cov(optimal_locations,sigma_eps,n,Psi):
     C_eps = In[loc]
     Theta_eps = C_eps@Psi
     
-    beta_cov = sigma_eps*np.linalg.inv(Theta_eps.T@Theta_eps)
+    beta_cov = sigma_eps*np.linalg.pinv(Theta_eps.T@Theta_eps)
     residuals_cov = Psi@beta_cov@Psi.T
     
     return beta_cov,residuals_cov
@@ -306,8 +308,14 @@ def plot_covariances(residuals_cov,residuals_cov_random,optimal_locations,random
     traces_random= []
     for cov_mat in residuals_cov_random:
         traces_random.append(np.trace(cov_mat))
-    trace_random_min = traces_random[np.argmin(traces_random)]
-    trace_random_max = traces_random[np.argmax(traces_random)]
+    diag_min = [np.diag(residuals_cov_random[i]).min() for i in range(len(residuals_cov_random))]
+    diag_max = [np.diag(residuals_cov_random[i]).max() for i in range(len(residuals_cov_random))]
+    
+    idx_min = np.argmin(traces_random)#np.argmin(traces_random)
+    idx_max = np.argmax(traces_random)#np.argmax(traces_random)
+    
+    trace_random_min = traces_random[idx_min]
+    trace_random_max = traces_random[idx_max]
     trace_optimal = np.trace(residuals_cov)
     
     
@@ -321,7 +329,7 @@ def plot_covariances(residuals_cov,residuals_cov_random,optimal_locations,random
     ax = fig.add_subplot(111)
     #ax.imshow(np.ma.masked_where(residuals_cov==np.diag(residuals_cov),residuals_cov),vmin = residuals_cov.min(), vmax = residuals_cov.max(),cmap='Oranges',alpha=1)
     im = ax.imshow(residuals_cov,vmin = residuals_cov.min(), vmax = residuals_cov.max(),cmap='Oranges',alpha=1.)    
-    ax.set_title(f'Residuals covariance matrix: SDP\n Tr = {trace_optimal:.2f}',fontsize=fs)
+    ax.set_title(f'Residuals covariance matrix: SDP\n Tr = {trace_optimal:.2f}, max = {np.diag(residuals_cov).max():.2f}, min = {np.diag(residuals_cov).min():.2f}',fontsize=fs)
     loc = np.sort(np.concatenate([optimal_locations[0],optimal_locations[1]]))
     ax.set_xticks(loc)
     ax.set_yticks(loc)
@@ -342,12 +350,12 @@ def plot_covariances(residuals_cov,residuals_cov_random,optimal_locations,random
     
     fig1 = plt.figure(figsize=(figx,figy))
     
-    residuals_cov_random_min = residuals_cov_random[np.argmin(traces_random)]
-    random_locations_min = random_locations[np.argmin(traces_random)]
+    residuals_cov_random_min = residuals_cov_random[idx_min]
+    random_locations_min = random_locations[idx_max]
     
     ax1 = fig1.add_subplot(111)
     im1 = ax1.imshow(residuals_cov_random_min,vmin = residuals_cov_random_min.min(), vmax = residuals_cov_random_min.max(),cmap='Oranges')
-    ax1.set_title(f'Residuals covariance matrix: Best random\n Tr = {trace_random_min:.2f}',fontsize=fs)
+    ax1.set_title(f'Residuals covariance matrix: Best random\n Tr = {trace_random_min:.2f}, max = {np.diag(residuals_cov_random_min).max():.2f}, min = {np.diag(residuals_cov_random_min).min():.2f}',fontsize=fs)
     loc = np.sort(np.concatenate([optimal_locations[0],optimal_locations[1]]))
     ax1.set_xticks(loc)
     ax1.set_yticks(loc)
@@ -373,7 +381,7 @@ def plot_covariances(residuals_cov,residuals_cov_random,optimal_locations,random
     
     ax2 = fig2.add_subplot(111)
     im2 = ax2.imshow(residuals_cov_random_max,vmin = residuals_cov_random_max.min(), vmax = residuals_cov_random_max.max(),cmap='Oranges')
-    ax2.set_title(f'Residuals covariance matrix: Worst random\n Tr = {trace_random_max:.2f}',fontsize=fs)
+    ax2.set_title(f'Residuals covariance matrix: Worst random\n Tr = {trace_random_max:.2f}, max = {np.diag(residuals_cov_random_max).max():.2f}, min = {np.diag(residuals_cov_random_max).min():.2f}',fontsize=fs)
     loc = np.sort(np.concatenate([optimal_locations[0],optimal_locations[1]]))
     ax2.set_xticks(loc)
     ax2.set_yticks(loc)
@@ -394,11 +402,39 @@ def plot_covariances(residuals_cov,residuals_cov_random,optimal_locations,random
     
     fig2.tight_layout()
     
+    # report dict
+    results_dict = {}
+    ## SDP placement
+    results_dict['SDP_placement_trace'] = trace_optimal
+    results_dict['SDP_placement_max_diag'] = np.diag(residuals_cov).max()
+    results_dict['SDP_placement_min_diag'] = np.diag(residuals_cov).min()
+    results_dict['SDP_placement_sensor_max'] = np.diag(residuals_cov)[optimal_locations[0]].max()
+    results_dict['SDP_placement_sensor_min'] = np.diag(residuals_cov)[optimal_locations[0]].min()
+    results_dict['SDP_placement_reconstruction_max'] = np.diag(residuals_cov)[optimal_locations[1]].max()
+    results_dict['SDP_placement_reconstruction_min'] = np.diag(residuals_cov)[optimal_locations[1]].min()
+    ## random placement
+    results_dict['Random_placement_min_trace'] = trace_random_min
+    results_dict['Random_placement_min_max_diag'] = np.diag(residuals_cov_random_min).max()
+    results_dict['Random_placement_min_min_diag'] = np.diag(residuals_cov_random_min).min()
+    results_dict['Random_placement_min_sensor_max'] = np.diag(residuals_cov_random_min)[random_locations_min[0]].max()
+    results_dict['Random_placement_min_sensor_min'] = np.diag(residuals_cov_random_min)[random_locations_min[0]].min()
+    results_dict['Random_placement_min_reconstruction_max'] = np.diag(residuals_cov_random_min)[random_locations_min[1]].max()
+    results_dict['Random_placement_min_reconstruction_min'] = np.diag(residuals_cov_random_min)[random_locations_min[1]].min()
+    
+    results_dict['Random_placement_max_trace'] = trace_random_max
+    results_dict['Random_placement_max_max_diag'] = np.diag(residuals_cov_random_max).max()
+    results_dict['Random_placement_max_min_diag'] = np.diag(residuals_cov_random_max).min()
+    results_dict['Random_placement_max_sensor_max'] = np.diag(residuals_cov_random_max)[random_locations_max[0]].max()
+    results_dict['Random_placement_max_sensor_min'] = np.diag(residuals_cov_random_max)[random_locations_max[0]].min()
+    results_dict['Random_placement_max_reconstruction_max'] = np.diag(residuals_cov_random_max)[random_locations_max[1]].max()
+    results_dict['Random_placement_max_reconstruction_min'] = np.diag(residuals_cov_random_max)[random_locations_max[1]].min()
+    
+    
     
     
     
         
-    return fig,fig1,fig2
+    return (fig,fig1,fig2), results_dict
 #%%
 
 if __name__=='__main__':
@@ -414,7 +450,7 @@ if __name__=='__main__':
     # create network
     ds = DataSet(n)
     ds.generate_points()
-    ds.generate_cluster_graph(num_clusters=1,plot_graph=False)
+    ds.generate_cluster_graph(num_clusters=2,plot_graph=False)
     ds.remove_GraphConnections(fraction=0.5,plot_graph=True)
     ds.get_laplacian(dist_based=True,plot_laplacian=True)
     ds.sample_from_graph(num_samples=m)
@@ -431,7 +467,7 @@ if __name__=='__main__':
     beta = np.diag(S)@Vt
     
     #sparsity
-    r = 10
+    r = 15
     Psi = U[:,:r]
     beta_sparse = beta.copy()
     beta_sparse[r:,:] = np.zeros(shape=(beta_sparse[r:,:].shape))
@@ -505,7 +541,7 @@ if __name__=='__main__':
     print('Plotting results')
     # fig_weights = plot_locations_weights(weights,Trace_residuals,n)
     # fig_trace = plot_trace(Trace_residuals,Trace_residuals_random,p_eps,p_zero,p_empty,r)
-    # fig_covariances = plot_covariances(Sigma_residuals,Sigma_residuals_random,Trace_residuals,Trace_residuals_random,n,optimal_locations,random_locations)
+    fig_covariances, dict_results = plot_covariances(residuals_cov,residuals_cov_random,optimal_locations,random_locations)
     
     
     print('------------\nAll Finished\n------------')

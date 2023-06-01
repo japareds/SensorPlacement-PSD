@@ -11,6 +11,7 @@ import math
 import itertools
 import numpy as np
 from scipy import linalg
+from scipy.special import logsumexp
 import cvxpy as cp
 import mosek
 import warnings
@@ -274,14 +275,15 @@ def diag_block_mat(L):
 
 
 
-def ConvexOpt_LMI(Psi,p):
+def ConvexOpt_LMI(Psi,p,threshold_t=0.0,var_beta=1.0):
     """
     Semidefinite program solution to covariance minimizing
     using sparse LMIs
+    t is boundeed: t>sigma**2*r/p
     """
     n,r = Psi.shape
     # variables
-    t = cp.Variable(1,nonneg=True,value=100*np.ones(1))
+    t = cp.Variable(1,nonneg=True,value=10*np.ones(1))
     x = cp.Variable((n*p,1),nonneg=True,value=np.ones((n*p,1)))
     # matrices
     Bj = cp.bmat([[np.zeros((r,r)),np.zeros((r,1))],[np.zeros((1,r)),t[:,None]]])
@@ -293,7 +295,7 @@ def ConvexOpt_LMI(Psi,p):
         for j in range(n):
             C = np.zeros((p,n))
             C[i,j] = 1
-            S_k = np.block([[C.T@C,C.T],[C,Ip]])
+            S_k = np.block([[C.T@C,C.T],[C,np.zeros((p,p))]])
             S.append(S_k)
     A_j = [R[j].T@S@R[j] for j in range(p)]
     # construct single LMI
@@ -323,11 +325,14 @@ def ConvexOpt_LMI(Psi,p):
     constraints += [np.zeros((n*p,1))<= x,
                     x<= np.ones(((n*p),1)),
                     cp.sum(x)==p,# sum of weights equal to number of sensors
-                    R1@x == np.ones((p,1)),#sum of sensor in space is 1: [cp.sum(x[(i-1)*n:i*n]) ==1 for i in range(1,n)]
+                    R1@x == np.ones((p,1)),#sum of sensor in space is 1:== [cp.sum(x[(i-1)*n:i*n]) ==1 for i in range(1,n)]
                     R2@x >= np.zeros((n,1)),
-                    R2@x <= np.ones((n,1))# sum of sensors weights at single location lower than 1
+                    R2@x <= np.ones((n,1))# sum of sensors weights at single location between 0 and 1
         ]
-    obj = cp.Minimize(t)
+    if threshold_t>0:
+        constraints += [t>=threshold_t]
+    
+    obj = cp.Minimize(t/var_beta)
     prob = cp.Problem(obj,constraints)
     if not prob.is_dcp():
         warnings.warn('Problem is not dcp')
@@ -340,7 +345,7 @@ def ConvexOpt_LMI(Psi,p):
     
     return H,C,prob.value
 
-def ConvexOpt_SDP(Psi,p):
+def ConvexOpt_SDP(Psi,p,threshold_t=0,var_beta = 1.0):
     """
     Semidefinite program solution for the sensor placement problem
     Only one class of sensors (homoscedastic network)
@@ -371,8 +376,10 @@ def ConvexOpt_SDP(Psi,p):
                     cp.diag(H) == cp.sum(C,axis=0),
                     H - cp.diag(cp.diag(H)) == 0
                     ]
+    if threshold_t>0:
+        constraints += [t>=threshold_t]
     
-    problem = cp.Problem(cp.Minimize(t),constraints)
+    problem = cp.Problem(cp.Minimize(t/var_beta),constraints)
     problem.solve(verbose=True)
     
     return H.value,C.value,problem.value

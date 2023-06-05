@@ -104,7 +104,7 @@ def plot_projection(LMI,LMI_q,p,n,H_t,C_t,x_PSD_t,t,projection='diag'):
     if projection == 'diag':# plot diagonal elements
         points = np.array([np.diag(LMI[i])[0:n] for i in range(LMI.shape[0])])
         points_q = np.array([np.diag(LMI_q[i])[0:n] for i in range(LMI.shape[0])])
-        points_opt = np.array([np.diag(H) for H in H_t.values()])
+        points_opt = np.array([np.diag(H) for H,_ in zip(H_t.values(),H_t.keys()) if _>=t])
         points_non_PSD = np.array([C.sum(axis=0) for C in x_non_PSD])
         points_non_PSD_q = np.array([(C**2).sum(axis=0) for C in x_non_PSD])
         
@@ -116,9 +116,10 @@ def plot_projection(LMI,LMI_q,p,n,H_t,C_t,x_PSD_t,t,projection='diag'):
     elif projection == 'n1':# get points at location 1
         points = np.array([np.concatenate([LMI[i][-p:,0],[LMI[i][0,0]]]) for i in range(LMI.shape[0])])
         points_q = np.array([np.concatenate([LMI[i][-p:,0],[LMI_q[i][0,0]]]) for i in range(LMI.shape[0])])
-        points_opt = np.array([[C[0,0],C[1,0],np.diag(H)[0]] for H,C in zip(H_t.values(),C_t.values())])
+        points_opt = np.array([[C[0,0],C[1,0],np.diag(H)[0]] for H,C,_ in zip(H_t.values(),C_t.values(),C_t.keys()) if _>=t])
         points_non_PSD = np.array([[C[0,0],C[1,0],C.sum(axis=0)[0]]for C in x_non_PSD])
         points_PSD = np.array([[C[0,0],C[1,0],C.sum(axis=0)[0]]for C in x_PSD])
+        
         
         points_non_PSD_q = np.array([[C[0,0],C[1,0],C_q.sum(axis=0)[0]]for C,C_q in zip(x_non_PSD,x_non_PSD**2)])
         
@@ -132,7 +133,7 @@ def plot_projection(LMI,LMI_q,p,n,H_t,C_t,x_PSD_t,t,projection='diag'):
     elif projection == 'n2':# get points at location 2
         points = np.array([np.concatenate([LMI[i][-p:,1],[LMI[i][1,1]]]) for i in range(LMI.shape[0])])
         points_q = np.array([np.concatenate([LMI[i][-p:,1],[LMI_q[i][1,1]]]) for i in range(LMI.shape[0])])
-        points_opt = np.array([[C[0,1],C[1,1],np.diag(H)[1]] for H,C in zip(H_t.values(),C_t.values())])
+        points_opt = np.array([[C[0,1],C[1,1],np.diag(H)[1]] for H,C,_ in zip(H_t.values(),C_t.values(),C_t.keys()) if _>=t])
         points_non_PSD = np.array([[C[0,1],C[1,1],C.sum(axis=0)[1]]for C in x_non_PSD])
         points_non_PSD_q = np.array([[C[0,1],C[1,1],C_q.sum(axis=0)[1]]for C,C_q in zip(x_non_PSD,x_non_PSD**2)])
         # entry names for plot
@@ -143,7 +144,7 @@ def plot_projection(LMI,LMI_q,p,n,H_t,C_t,x_PSD_t,t,projection='diag'):
     elif projection=='n3':# get points at location 3
         points = np.array([np.concatenate([LMI[i][-p:,2],[LMI[i][2,2]]]) for i in range(LMI.shape[0])])
         points_q = np.array([np.concatenate([LMI[i][-p:,2],[LMI_q[i][2,2]]]) for i in range(LMI.shape[0])])
-        points_opt = np.array([[C[0,2],C[1,2],np.diag(H)[2]] for H,C in zip(H_t.values(),C_t.values())])
+        points_opt = np.array([[C[0,2],C[1,2],np.diag(H)[2]] for H,C,_ in zip(H_t.values(),C_t.values(),C_t.keys()) if _>=t])
         points_non_PSD = np.array([[C[0,2],C[1,2],C.sum(axis=0)[2]]for C in x_non_PSD])
         points_non_PSD_q = np.array([[C[0,2],C[1,2],C_q.sum(axis=0)[2]]for C,C_q in zip(x_non_PSD,x_non_PSD**2)])
         # entry names for plot
@@ -155,7 +156,7 @@ def plot_projection(LMI,LMI_q,p,n,H_t,C_t,x_PSD_t,t,projection='diag'):
     elif projection == 'n3_mixed':
         points = np.array([np.concatenate([[LMI[i][n,0]],[LMI[i][n+1,1]],[LMI[i][2,2]]]) for i in range(LMI.shape[0])])
         points_q = np.array([np.concatenate([[LMI_q[i][n,0]],[LMI_q[i][n+1,1]],[LMI_q[i][2,2]]]) for i in range(LMI.shape[0])])
-        points_opt = np.array([[C[0,0],C[1,1],np.diag(H)[2]] for H,C in zip(H_t.values(),C_t.values())])
+        points_opt = np.array([[C[0,0],C[1,1],np.diag(H)[2]] for H,C,_ in zip(H_t.values(),C_t.values(),C_t.keys()) if _>=t])
         points_non_PSD = np.array([[C[0,0],C[1,1],C.sum(axis=0)[2]]for C in x_non_PSD])
         points_non_PSD_q = np.array([[C[0,0],C[1,1],C_q.sum(axis=0)[2]]for C,C_q in zip(x_non_PSD,x_non_PSD**2)])
         # entry names for plot
@@ -185,8 +186,8 @@ def plot_projection(LMI,LMI_q,p,n,H_t,C_t,x_PSD_t,t,projection='diag'):
     ax.set_zticks([np.round(i,1) for i in np.arange(0.,1.2,0.2)])
     ax.set_title(f'{p} sensors\n projection: {projection}')
     ax.legend()
-    try:#non-PSD points
-        ax.plot_trisurf(points_non_PSD[:,0],points_non_PSD[:,1],points_non_PSD[:,2],color='k')
+    try:#PSD and non-PSD points
+        ax.scatter3D(points_non_PSD[:,0],points_non_PSD[:,1],points_non_PSD[:,2],color='k')
         ax.plot_trisurf(points_non_PSD_q[:,0],points_non_PSD_q[:,1],points_non_PSD_q[:,2],color='k')
         ax.plot_trisurf(points_PSD[:,0],points_PSD[:,1],points_PSD[:,2],color='w')
         fig.tight_layout()

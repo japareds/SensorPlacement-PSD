@@ -12,6 +12,7 @@ import itertools
 import numpy as np
 from scipy import linalg
 from scipy.special import logsumexp
+import scipy.linalg
 import cvxpy as cp
 import mosek
 import warnings
@@ -138,7 +139,7 @@ def ConvexOpt_homoscedasticity(Psi,p):
     
     return C,locations,beta.value
 
-def ConvexOpt(Psi,p,k=[],sensors = []):
+def ConvexOpt_heteroscedasticity(Psi,p,k=[],sensors = []):
     """
     Variant medthod for heteroscedasticity in the measurements: different type of sensors.
     
@@ -209,62 +210,183 @@ def ConvexOpt(Psi,p,k=[],sensors = []):
                 C[i,np.sort(np.concatenate(locations))[i]] = 1
     
     return C,locations,beta.value
-#%%
-def ConvexOpt_limit(Psi,sigma1,sigma2,p1,p2,lambda_reg = 0.0):
+#%% Optimization
+class ConvexOpt():
     """
-    Convex optimization for sensor placement problem
+    Convex optimization alternatives
     """
-    n,r = Psi.shape
-    H1 = cp.Variable(n,nonneg=True,value=np.zeros(n))
-    H2 = cp.Variable(n,nonneg=True,value=np.zeros(n))
-    Phi1 = Psi.T@cp.diag(H1)@Psi
-    Phi2 = Psi.T@cp.diag(H2)@Psi
+    def __init__(self,Psi,n,p,r):
+        self.Psi = Psi
+        self.n = n
+        self.r = r
+        self.p = p
+
+    def ConvexOpt_limit(Psi,sigma1,sigma2,p1,p2,lambda_reg = 0.0):
+        """
+        Convex optimization for sensor placement problem
+        """
+        n,r = Psi.shape
+        H1 = cp.Variable(n,nonneg=True,value=np.zeros(n))
+        H2 = cp.Variable(n,nonneg=True,value=np.zeros(n))
+        Phi1 = Psi.T@cp.diag(H1)@Psi
+        Phi2 = Psi.T@cp.diag(H2)@Psi
+        
+        if p1!=0 and p2!= 0: # LCS and RefSt
+            obj = cp.log_det( (1/sigma1)*Phi1 + (1/sigma2)*Phi2 )
+            constraints = [
+                0<=H1,
+                0<=H2,
+                H1<=1,
+                H2<=1,
+                H1+H2 <=1,
+                cp.sum(H1) == p1,
+                cp.sum(H2) == p2
+                ]
+            
+        elif p2 == 0 :
+            print('0 reference stations')
+            obj = cp.log_det((1/sigma1)*Phi1)
+            constraints = [
+                0<=H1,
+                H1<=1,
+                cp.sum(H1) == p1,
+                ]
+            
+        elif p1 == 0:
+            print('0 LCSs')
+            obj = cp.log_det((1/sigma2)*Phi2)
+            constraints = [
+                0<=H2,
+                H2<=1,
+                cp.sum(H2) == p2
+                ]
+            
+            
+        
+        
+        if lambda_reg > 0.0 and p1!=0:
+            print(f'Regularized optimization problem with lambda = {lambda_reg}')
+            obj2 = (1/sigma2)*cp.trace(Phi2)
+            problem = cp.Problem(cp.Minimize(-1*obj - lambda_reg*obj2),constraints)
+        else:
+            problem = cp.Problem(cp.Minimize(-1*obj),constraints)
+        
+        problem.solve(verbose=True,max_iters=100000)#10000000 iters for corvengence lambda 1000
+        H1_optimal = H1.value
+        H2_optimal = H2.value
+        
+        return H1_optimal,H2_optimal,problem.value
+
+    def ConvexOpt_LMI(self,threshold_t=0.0,var_beta=1.0,rotate=False,theta=0.0,plane=0):
+        """
+        Semidefinite program solution to covariance minimizing
+        using sparse LMIs
+        t is bounded: t>sigma**2*r/p
+        """
+        p = self.p
+        n,r = self.Psi.shape
+        # variables
+        t = cp.Variable(1,nonneg=True,value=10*np.ones(1))
+        x = cp.Variable((n*p,1),nonneg=True,value=np.ones((n*p,1)))
+        # matrices
+        Bj = cp.bmat([[np.zeros((r,r)),np.zeros((r,1))],[np.zeros((1,r)),t[:,None]]])
+        Ip = np.identity(p)
+        R = [np.block([[self.Psi,np.zeros((n,1))],[np.zeros((p,r)),Ip[:,j][:,None]]]) for j in range(p) ]
+        # central sparse matrix
+        S = []
+        for i in range(p):
+            for j in range(n):
+                C = np.zeros((p,n))
+                C[i,j] = 1
+                S_k = np.block([[C.T@C,C.T],[C,np.zeros((p,p))]])
+                S.append(S_k)
+        A_j = [R[j].T@S@R[j] for j in range(p)]
+        # construct single LMI
+        A_p = []
+        for j in range(p):
+            A_p.append(cp.sum([x[i]*A_j[j][i] for i in range(x.shape[0])]))
+        
+        LMI = []
+        for j in range(p):
+            LMI.append(cp.sum([A_p[j],Bj]))
+            
+        # add rotation to LMI
+        if rotate:
+            dim = (self.r+1)**2
+            possible_vectors = np.array([np.array(i).T for i in itertools.combinations(np.identity(dim),2)])
+            for j in range(p):
+                LMI_vectorized = cp.reshape(LMI[j],shape=((r+1)**2,1))
+                LMI_rotated = self.include_rotation(theta,plane,possible_vectors,LMI_vectorized)
+                LMI[j] = cp.reshape(LMI_rotated,shape=(r+1,r+1))
+                
+            
     
-    if p1!=0 and p2!= 0: # LCS and RefSt
-        obj = cp.log_det( (1/sigma1)*Phi1 + (1/sigma2)*Phi2 )
-        constraints = [
-            0<=H1,
-            0<=H2,
-            H1<=1,
-            H2<=1,
-            H1+H2 <=1,
-            cp.sum(H1) == p1,
-            cp.sum(H2) == p2
+        # single LMI 
+        #B = cp.kron(np.eye(p),Bj)
+        
+        # linear constraints
+        R1 = np.zeros((p,n*p))
+        for i in range(p):
+            #R1[(i-1),(i-1)*n:i*n] = np.ones(n)
+            R1[i,i*n:(i*n+n)] = np.ones(n)
+            
+        R2 = np.tile(np.identity(n),p)
+        # constraints
+        constraints = []
+        ## LMIs
+        constraints += [LMI[i] >> 0 for i in range(p)]
+        ## weights
+        constraints += [np.zeros((n*p,1))<= x,
+                        x<= np.ones(((n*p),1)),
+                        cp.sum(x)==p,# sum of weights equal to number of sensors
+                        R1@x == np.ones((p,1)),#sum of sensor in space is 1:== [cp.sum(x[(i-1)*n:i*n]) ==1 for i in range(1,n)]
+                        R2@x >= np.zeros((n,1)),
+                        R2@x <= np.ones((n,1))# sum of sensors weights at single location between 0 and 1
             ]
+        if threshold_t>0:
+            print(f'Adding convergence threshold: t>={threshold_t}')
+            constraints += [t>=threshold_t]
         
-    elif p2 == 0 :
-        print('0 reference stations')
-        obj = cp.log_det((1/sigma1)*Phi1)
-        constraints = [
-            0<=H1,
-            H1<=1,
-            cp.sum(H1) == p1,
-            ]
+        obj = cp.Minimize(t/var_beta)
+        prob = cp.Problem(obj,constraints)
+        if not prob.is_dcp():
+            warnings.warn('Problem is not dcp')
+        else:
+            prob.solve(verbose=True)
         
-    elif p1 == 0:
-        print('0 LCSs')
-        obj = cp.log_det((1/sigma2)*Phi2)
-        constraints = [
-            0<=H2,
-            H2<=1,
-            cp.sum(H2) == p2
-            ]
+        C = np.reshape(x.value,(p,n))
+        H = np.zeros((n,n))
+        np.fill_diagonal(H, (R2@x).value)
         
+
+        self.H = H 
+        self.C = C
+        self.obj = prob.value
         
-    
-    
-    if lambda_reg > 0.0 and p1!=0:
-        print(f'Regularized optimization problem with lambda = {lambda_reg}')
-        obj2 = (1/sigma2)*cp.trace(Phi2)
-        problem = cp.Problem(cp.Minimize(-1*obj - lambda_reg*obj2),constraints)
-    else:
-        problem = cp.Problem(cp.Minimize(-1*obj),constraints)
-    
-    problem.solve(verbose=True,max_iters=100000)#10000000 iters for corvengence lambda 1000
-    H1_optimal = H1.value
-    H2_optimal = H2.value
-    
-    return H1_optimal,H2_optimal,problem.value
+    def rotation_matrix(self,u,v,theta):
+        """
+        Rotates a vector in the R^(n-2) plane by an angle theta
+        given two orthogonal vectors in R^n
+        """
+        L = v@u.T - u@v.T
+        rotation = scipy.linalg.expm(theta*L)
+        return rotation
+     
+    def include_rotation(self,theta,plane,possible_vectors,M):
+        """
+        Include rotation on the r+1 PSD polytope
+        """
+        
+        rotation_vectors = possible_vectors[plane]
+        return self.rotation_matrix(rotation_vectors[:,0][:,None],rotation_vectors[:,1][:,None],theta)@M
+        
+    def k_swap(max_swaps):
+        """
+        Swap the k-th chosen location with the n-p remaining locations 
+        until no swap increases the objective function
+        """
+        pass
+        return
 
 def diag_block_mat(L):
     shp = L[0].shape
@@ -275,75 +397,6 @@ def diag_block_mat(L):
 
 
 
-def ConvexOpt_LMI(Psi,p,threshold_t=0.0,var_beta=1.0):
-    """
-    Semidefinite program solution to covariance minimizing
-    using sparse LMIs
-    t is boundeed: t>sigma**2*r/p
-    """
-    n,r = Psi.shape
-    # variables
-    t = cp.Variable(1,nonneg=True,value=10*np.ones(1))
-    x = cp.Variable((n*p,1),nonneg=True,value=np.ones((n*p,1)))
-    # matrices
-    Bj = cp.bmat([[np.zeros((r,r)),np.zeros((r,1))],[np.zeros((1,r)),t[:,None]]])
-    Ip = np.identity(p)
-    R = [np.block([[Psi,np.zeros((n,1))],[np.zeros((p,r)),Ip[:,j][:,None]]]) for j in range(p) ]
-    # central sparse matrix
-    S = []
-    for i in range(p):
-        for j in range(n):
-            C = np.zeros((p,n))
-            C[i,j] = 1
-            S_k = np.block([[C.T@C,C.T],[C,np.zeros((p,p))]])
-            S.append(S_k)
-    A_j = [R[j].T@S@R[j] for j in range(p)]
-    # construct single LMI
-    A_p = []
-    for j in range(p):
-        A_p.append(cp.sum([x[i]*A_j[j][i] for i in range(x.shape[0])]))
-    
-    LMI = []
-    for j in range(p):
-        LMI.append(cp.sum([A_p[j],Bj]))
-
-    # single LMI 
-    #B = cp.kron(np.eye(p),Bj)
-    
-    # linear constraints
-    R1 = np.zeros((p,n*p))
-    for i in range(p):
-        #R1[(i-1),(i-1)*n:i*n] = np.ones(n)
-        R1[i,i*n:(i*n+n)] = np.ones(n)
-        
-    R2 = np.tile(np.identity(n),p)
-    # constraints
-    constraints = []
-    ## LMIs
-    constraints += [LMI[i] >> 0 for i in range(p)]
-    ## weights
-    constraints += [np.zeros((n*p,1))<= x,
-                    x<= np.ones(((n*p),1)),
-                    cp.sum(x)==p,# sum of weights equal to number of sensors
-                    R1@x == np.ones((p,1)),#sum of sensor in space is 1:== [cp.sum(x[(i-1)*n:i*n]) ==1 for i in range(1,n)]
-                    R2@x >= np.zeros((n,1)),
-                    R2@x <= np.ones((n,1))# sum of sensors weights at single location between 0 and 1
-        ]
-    if threshold_t>0:
-        constraints += [t>=threshold_t]
-    
-    obj = cp.Minimize(t/var_beta)
-    prob = cp.Problem(obj,constraints)
-    if not prob.is_dcp():
-        warnings.warn('Problem is not dcp')
-    else:
-        prob.solve(verbose=True)
-    
-    C = np.reshape(x.value,(p,n))
-    H = np.zeros((n,n))
-    np.fill_diagonal(H, (R2@x).value)
-    
-    return H,C,prob.value
 
 def ConvexOpt_SDP(Psi,p,threshold_t=0,var_beta = 1.0):
     """

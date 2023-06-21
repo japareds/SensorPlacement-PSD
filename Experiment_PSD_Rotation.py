@@ -15,6 +15,7 @@ import decimal
 import scipy.linalg
 import math
 import time
+import pickle
 
 import LoadDataSet as LDS
 import LowRankDecomposition as LRD
@@ -223,6 +224,52 @@ def Convex_LMI(Psi,n,p,r,t):
     convex_opt.ConvexOpt_LMI(threshold_t=t,var_beta=1.0)
     C,H,obj = convex_opt.C, convex_opt.H,convex_opt.obj
     return C,H,obj
+
+# =============================================================================
+# Random placement
+# =============================================================================
+
+class RandomPlacement():
+    def __init__(self,Psi,p,p_empty,n,num_samples):
+        self.Psi = Psi
+        self.p = p
+        self.n = n
+        self.p_empty = p_empty
+        self.num_samples = num_samples
+        
+
+    def random_sample(self):
+        """
+        Select random locations
+        """
+        if self.num_samples > math.comb(self.n,self.p):
+            print('NUmber of random samples is higher than the number of possible combinations.')
+            self.num_samples = math.comb(self.n,self.p)
+            
+        print(f'Sampling {self.num_samples} over {math.comb(self.n,self.p)} possible combinations.')
+        locations = np.arange(self.n)
+        random_locations = {el:0 for el in np.arange(self.num_samples)}
+        rng = np.random.default_rng(seed=92)
+        for i in np.arange(self.num_samples):
+            rng.shuffle(locations)
+            loc_eps = np.sort(locations[:self.p])
+            loc_empty = np.sort(locations[-self.p_empty:])
+            random_locations[i] = [loc_eps,loc_empty]
+        self.random_samples = random_locations
+    
+    def OLS_cov(self,sigma_eps,locations):
+        """
+        Residual covariance matrix
+        """
+        loc = locations[0]
+        In = np.identity(self.n)
+        C_eps = In[loc]
+        H_eps = C_eps.T@C_eps
+        
+        beta_cov = sigma_eps*np.linalg.pinv(self.Psi.T@H_eps@self.Psi)
+        residuals_cov = C_eps@self.Psi@beta_cov@self.Psi.T@C_eps.T
+        
+        return beta_cov,residuals_cov
 #%%
 def discretization(C,H,p,n):
     """
@@ -234,29 +281,35 @@ def discretization(C,H,p,n):
     H_discrete = C_discrete.T@C_discrete
     return C_discrete, H_discrete
 
-def compare_solution(C,H,Psi,obj,r,n,p,t):
+def compare_solution(C,H,Psi,obj,r,n,p,t,residuals_cov_random,random_samples):
     """
     Given C,H,obj: solutions of the convex optimization problem
-    Compute and compare covariance matrix
+    Compute and compare covariance matrix with random sampling
     """
-    # real solutions
-    In = np.identity(n)
-    C_sparse = np.array([x for x in itertools.combinations(In,p)])
-    covariances = [C@Psi@np.linalg.inv(Psi.T@C.T@C@Psi)@Psi.T@C.T for C in C_sparse]
-    # print('Different covariance matrices')
-    # for i in range(C_sparse.shape[0]):
-    #     print(f'C=\n{C_sparse[i]}\nSigma=\n{covariances[i]}')
-    print(f'Worst case scenario covariance entry:\nCombination of maximum:\n{C_sparse[np.argmax(([np.diag(cov).max() for cov in covariances]))]}\nValue:{np.max([np.diag(cov).max() for cov in covariances])}\nCombination of minimum:\n{C_sparse[np.argmin(([np.diag(cov).max() for cov in covariances]))]}\nValue: {np.min([np.diag(cov).max() for cov in covariances])}')
+    # # all possible combinations
+    # In = np.identity(n)
+    # C_sparse = np.array([x for x in itertools.combinations(In,p)])
+    # covariances = [C@Psi@np.linalg.inv(Psi.T@C.T@C@Psi)@Psi.T@C.T for C in C_sparse]
+    
+    # random sampling covariance matrices
+    worst_case_scenario_random = [np.diag(M).max() for M in residuals_cov_random]
+    worst_random = np.max(worst_case_scenario_random)
+    worst_random_locations = random_samples[np.argmax(worst_case_scenario_random)][0]
+    best_random = np.min(worst_case_scenario_random)
+    best_random_locations = random_samples[np.argmin(worst_case_scenario_random)][0]
+    
+    print(f'\nWorst case scenario results\nRandom sampling:\nWorst combination: {worst_random_locations}\nMax diagonal covariance entry: {worst_random}\nBest combination: {best_random_locations}\nMax diagonal covariance entry: {best_random}')
     
     # SDP solution at step t
+    loc = np.sort(np.argsort(np.diag(H))[-p:])
     cov = C@Psi@np.linalg.inv(Psi.T@H@Psi)@Psi.T@C.T
-    print(f'\nLinear solution at threshold t>={t}\nobjective={obj}\nC=\n{C}\nH=\n{H}\nCovariance=\n{cov}')
-    print(f'Maximum diagonal value of covariance matrix: {np.diag(cov).max()}')
+    
+    print(f'\nLinear solution at threshold t>={t}\nobjective={obj}\nSensor placement: {loc}\nMax diagonal covariance entry: {np.diag(cov).max()}')
     
     # SDP solution discretization
     C_discrete, H_discrete = discretization(C,H,p,n)
     cov_real = C_discrete@Psi@np.linalg.inv(Psi.T@H_discrete@Psi)@Psi.T@C_discrete.T
-    print(f'Discretization of SDP results:\nLocations:\n{C_discrete}\ncovariance:\n{cov_real}\nMax diagonal value: {np.max(np.diag(cov_real))}')
+    print(f'\nDiscretization of SDP results:\nMax diagonal covariance entry: {np.diag(cov_real).max()}')
     
     
     # # vertex solutions
@@ -270,6 +323,17 @@ def compare_solution(C,H,Psi,obj,r,n,p,t):
     #     print(f'C=\n{x_vertex[i]}\nH=\n{np.diag(x_vertex[i].sum(axis=0))}\nSigma=\n{cov_discrete[i]}')
         
     return
+
+def save_iterations_results(C_iter,H_iter,results_path,n,p,r):
+    fname=f'Results_rotations_C_n{n}_p{p}_{r}.pkl'
+    with open(results_path+fname, 'wb') as handle:
+        pickle.dump(C_iter, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    fname=f'Results_rotations_H_n{n}_p{p}_{r}.pkl'
+    with open(results_path+fname, 'wb') as handle:
+        pickle.dump(H_iter, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f'Results saved at: {results_path}')
+    return
+    
 #%%
 if __name__=='__main__':
     abs_path = os.path.dirname(os.path.realpath(__file__))
@@ -278,10 +342,11 @@ if __name__=='__main__':
     # =============================================================================
     #     Parameters
     # =============================================================================
-    n,p,r = 30,12,7
+    n,p,r = 30,15,7
     basis = Basis(n,r,basis='random')
     basis.create_psi_basis(random_seed=92)
     Psi_orig = basis.Psi.copy()
+    sigma = 1.0
     
     
     t_tol = 1e-3
@@ -308,15 +373,30 @@ if __name__=='__main__':
     # =============================================================================
     # Find solution point via SDP
     # =============================================================================
-
+    
+    print('Random placement')
+    num_random_samples = 1000
+    random_locations = RandomPlacement(Psi_orig,p,n-p,n,num_samples=num_random_samples) 
+    random_locations.random_sample()
+    residuals_cov_random = [random_locations.OLS_cov(sigma,loc)[1] for loc in random_locations.random_samples.values()]
+    
     C_init,H_init,obj_init = Convex_LMI(Psi_orig,n,p,r,0.0)
+    print('\nOriginal basis results')
+    compare_solution(C_init,H_init,Psi_orig,obj_init,r,n,p,t_last_point,residuals_cov_random,random_locations.random_samples)
     
-    
+    # =============================================================================
+    # Perform  basis rotations
+    # =============================================================================
     proximity_tol = 4e-2
     time_init = time.time()
-    n_iter = 500
+    n_iter = 50
     C_iter = {el:0 for el in range(n_iter)}
     H_iter = {el:0 for el in range(n_iter)}
+    
+    input('Starting rotations iterator\nPress Enter to continue ... ')
+    num_threads = '1'
+    os.environ["OMP_NUM_THREADS"] = num_threads
+    
     for i in range(n_iter):
         rng = np.random.default_rng(seed=i)
         count = 0
@@ -325,7 +405,7 @@ if __name__=='__main__':
         while p-vertex_proximity > proximity_tol:  # still far from vertex
             count+=1
             theta,plane = rng.normal(loc=0.0,scale=1.0,size=1)[0],rng.integers(low=0.0,high=math.comb(n,2) -1)
-            basis.perturbate_eigenmodes(mode='rotation_single',theta_max=np.deg2rad(theta),rotation_vector=plane)
+            #basis.perturbate_eigenmodes(mode='rotation_single',theta_max=np.deg2rad(theta),rotation_vector=plane)
             
             C,H,obj = Convex_LMI(basis.Psi,n,p,r,0.0)
             vertex_proximity_iter = np.sum(np.diag(H)**2) # tends to p as the point is close to a vertex
@@ -334,16 +414,18 @@ if __name__=='__main__':
                 vertex_proximity = vertex_proximity_iter
             else:# keep old proximity and return rotation
                 basis.perturbate_eigenmodes(mode='rotation_single',theta_max=np.deg2rad(-theta),rotation_vector=plane)
+                count-=1
+        
         C_iter[i] = C
         H_iter[i] = H
-        
+        print(f'Iteration finished after {count} rotations')
         
     time_end = time.time()
-    print(f'Finished in: {(time_end-time_init):.2f} seconds after {count} rotations')
-    
+    print(f'Finished in: {(time_end-time_init):.2f} seconds')
+    save_iterations_results(C_iter, H_iter, results_path, n, p, r)
     # Psi_final = basis.Psi
-    # print('\nOriginal basis results')
-    compare_solution(C_init,H_init,Psi_orig,obj_init,r,n,p,t_last_point)
+    
+    
     # print('\nFinal basis results')
     # compare_solution(C,H,Psi_final,obj,r,n,p,t_last_point)
     # print('\nOriginal basis with final locations')
